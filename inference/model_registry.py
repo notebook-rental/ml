@@ -68,7 +68,10 @@ class ModelRegistry:
             return local
         local.parent.mkdir(parents=True, exist_ok=True)
         tmp = local.with_suffix(local.suffix + ".part")
-        tmp.write_bytes(self.storage.get_bytes(key))
+        log.info("모델 파일 내려받는 중 key=%s → %s", key, local)
+        data = self.storage.get_bytes(key)
+        log.info("모델 파일 받음 key=%s (%.1f MB)", key, len(data) / 1e6)
+        tmp.write_bytes(data)
         if sha256 and sha256_file(tmp) != sha256:
             tmp.unlink(missing_ok=True)
             raise ModelIntegrityError(f"sha256 불일치: {key}")
@@ -94,6 +97,12 @@ class ModelRegistry:
         return Models(backbone=backbone, segmenter=segmenter, model_version_id=model_version_id)
 
     def load_initial(self) -> None:
+        log.info(
+            "모델 로드 시작 backbone=%s key=%s cache=%s",
+            self.settings.backbone_name,
+            self.settings.backbone_key,
+            self.cache_dir,
+        )
         with self._lock:
             self._models = self.build()
         log.info(

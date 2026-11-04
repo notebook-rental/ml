@@ -86,6 +86,9 @@ class S3Storage:
                 config=Config(
                     s3={"addressing_style": "path"},
                     retries={"max_attempts": 3, "mode": "standard"},
+                    # MinIO에 닿지 않으면 오래 매달리지 말고 빨리 실패해 로그를 남긴다
+                    connect_timeout=5,
+                    read_timeout=60,
                     max_pool_connections=32,
                 ),
             )
