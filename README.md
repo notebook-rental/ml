@@ -68,7 +68,7 @@ inference/
 bench/bench_compare.py  속도 측정(tasks T001)
 tools/
   build_vit_onnx.py     DINOv2-S와 같은 구조의 무작위 가중치 ONNX(속도 측정·CI용)
-  export_dinov2.py      공식 DINOv2 가중치 → ONNX(운영용, PyTorch 있는 PC에서 실행)
+  export_dinov2.py      공식 DINOv2 가중치 → ONNX(운영용). GitHub Actions의 export-model 워크플로가 실행해 Release에 올린다
 tests/
   unit/                 부품별 테스트
   contract/             HTTP 계약 테스트(응답 형식, 상태 코드, 503)

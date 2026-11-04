@@ -49,6 +49,7 @@ def main() -> None:  # pragma: no cover - PyTorch와 인터넷이 필요한 수�
         output_names=["patch_tokens"],
         opset_version=a.opset,
         do_constant_folding=True,
+        dynamo=False,  # torch 2.9부터 기본값이 바뀐다. 예전(TorchScript) 방식으로 고정
     )
     print(f"저장: {a.out}")
 
