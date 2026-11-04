@@ -1,0 +1,36 @@
+# main 에 들어오면: 테스트 → 이미지 빌드·push(ghcr.io/notebook-rental/ml-inference:<git SHA>)
+# → deploy repo 의 overlays/prod/ml-inference 이미지 태그 갱신 → Argo CD 가 반영.
+# 설명: notebook-rental/deploy 의 docs/ci-release.md
+# 필요한 저장소 Secret: DEPLOY_REPO_TOKEN (deploy repo Contents 쓰기만 가진 fine-grained 토큰)
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # 손으로 다시 배포할 때(Actions 화면의 Run workflow)
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest --cov --cov-fail-under=80
+
+  release:
+    needs: test
+    permissions:
+      contents: read
+      packages: write # ghcr.io 에 push
+    uses: notebook-rental/deploy/.github/workflows/release-image.yml@main
+    with:
+      app: ml-inference
+    secrets:
+      DEPLOY_REPO_TOKEN: ${{ secrets.DEPLOY_REPO_TOKEN }}
