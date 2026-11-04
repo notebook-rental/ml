@@ -24,4 +24,4 @@ ENV APP_PROFILE=prod \
     OMP_NUM_THREADS=1
 EXPOSE 8000
 # 워커 1개: 모델을 프로세스마다 따로 올리면 메모리가 늘어난다. 동시 처리는 스레드(MAX_CONCURRENT_COMPARES)로.
-CMD ["uvicorn", "inference.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]
+CMD ["uvicorn", "--factory", "inference.app:default_app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]

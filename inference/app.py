@@ -13,7 +13,7 @@
 모든 응답은 공통 형식(header/result)이다. 클러스터 안에서만 열리고(Ingress 미등록),
 INTERNAL_TOKEN이 설정되어 있으면 POST 요청에 헤더 X-Internal-Token이 맞아야 한다.
 
-실행: `uvicorn inference.app:app --host 0.0.0.0 --port 8000`
+실행: `uvicorn --factory inference.app:default_app --host 0.0.0.0 --port 8000`
 CPU를 많이 쓰는 처리는 동기 함수(def)로 두어 FastAPI가 스레드 풀에서 돌리게 한다. ONNX Runtime·OpenCV는
 계산 중 GIL을 풀기 때문에 스레드로도 여러 요청이 동시에 돈다.
 """
@@ -231,12 +231,7 @@ def create_app(
     return app
 
 
-def _default_app() -> FastAPI:  # pragma: no cover - uvicorn 진입점
+def default_app() -> FastAPI:  # pragma: no cover - uvicorn --factory 진입점
+    """`uvicorn --factory inference.app:default_app`로 실행한다. 설정은 환경변수에서 읽는다."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     return create_app()
-
-
-def __getattr__(name: str):  # pragma: no cover - `uvicorn inference.app:app`일 때만 앱을 만든다
-    if name == "app":
-        return _default_app()
-    raise AttributeError(name)

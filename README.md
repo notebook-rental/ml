@@ -114,6 +114,7 @@ tests/
 | `ENGINE` | `onnxruntime` | `openvino`도 가능(`pip install ".[openvino]"`) |
 | `INTRA_OP_THREADS` | 0(=CPU 수) | 요청 하나가 쓰는 스레드 |
 | `MAX_CONCURRENT_COMPARES` | 2 | 넘으면 503 |
+| `BASELINE_LRU_SIZE` | 240 | 메모리에 올려 둘 기준 사진 수(노트북 30대 × 8컷, 약 1.5GB). 파드 메모리에 맞춰 줄인다 |
 | `COMPARE_LONG_SIDE` | 1024 | 정렬·비교 해상도(긴 변) |
 | `THRESHOLD`, `DINO_SCALE`, `SSIM_GAIN`, `MIN_REGION_PX` | 0.35, 0.5, 1.6, 60 | 후보 판정 값. **초기 평가 세트(실제 사진)로 보정해야 한다** |
 
@@ -129,7 +130,7 @@ python tools/build_vit_onnx.py --out vit.onnx
 
 # MinIO(deploy/local/docker-compose.yml)의 models/dinov2-s14/model.onnx 에 올린 뒤
 export APP_PROFILE=local MINIO_ACCESS_KEY=... MINIO_SECRET_KEY=...
-uvicorn inference.app:app --port 8000
+uvicorn --factory inference.app:default_app --port 8000
 ```
 
 MinIO 없이 디스크 폴더로 돌려 보려면 `STORAGE_BACKEND=local LOCAL_STORAGE_ROOT=./.data/storage`.
