@@ -292,3 +292,43 @@ def test_spring_poll_on_start(settings, storage, put, patch_mean_path):
     svc.start(load_models=True, poll=False)
     assert svc.registry.models.model_version_id == 11
     svc.stop()
+
+
+def test_probe_paths(client):
+    """deploy의 startupProbe·livenessProbe(/healthz), readinessProbe(/readyz)와 경로가 맞아야 한다."""
+    assert _ok(client.get("/healthz"))["status"] == "UP"
+    assert _ok(client.get("/readyz"))["backbone"] == "dinov2-s14@1"
+
+
+def test_model_load_retries_until_file_appears(settings, storage, put, patch_mean_path):
+    """MinIO에 모델 파일이 없으면 503 + 실패 이유를 보이고, 파일을 올리면 다시 띄우지 않아도 Ready가 된다."""
+    import threading
+
+    from inference.app import Service
+
+    svc = Service(settings, storage)
+    t = threading.Thread(target=svc.start, kwargs={"poll": False, "retry_seconds": 0.05}, daemon=True)
+    t.start()
+    for _ in range(100):
+        if svc.load_error:
+            break
+        threading.Event().wait(0.02)
+    assert svc.load_error and "ObjectNotFound" in svc.load_error
+    app = create_app(settings, storage, registry=svc.registry, load_models=False)
+    app.state.svc.load_error = svc.load_error
+    with TestClient(app) as c:
+        r = c.get("/readyz")
+        assert r.status_code == 503 and "ObjectNotFound" in r.json()["result"]["loadError"]
+    put("models/dinov2-s14/model.onnx", patch_mean_path.read_bytes())
+    t.join(timeout=30)
+    assert svc.registry.ready and svc.load_error is None
+    svc.stop()
+
+
+def test_model_load_stops_on_shutdown(settings, storage):
+    from inference.app import Service
+
+    svc = Service(settings, storage)
+    svc.stop()  # 이미 종료 중이면 한 번 실패한 뒤 바로 멈춘다
+    svc.start(poll=False, retry_seconds=10)
+    assert not svc.registry.ready and svc.load_error

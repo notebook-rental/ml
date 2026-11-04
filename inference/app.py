@@ -2,8 +2,8 @@
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
-| GET  | /health/live | 프로세스가 살아 있는지(liveness) |
-| GET  | /health/ready | 모델 로드·워밍업이 끝났는지(readiness). 끝나기 전에는 503 |
+| GET  | /healthz (= /health/live) | 프로세스가 살아 있는지(liveness, startupProbe) |
+| GET  | /readyz (= /health/ready) | 모델 로드·워밍업이 끝났는지(readiness). 끝나기 전에는 503 |
 | POST | /quality | 촬영 품질 검사(동기, 3초 이내) |
 | POST | /baseline-features | 대여 사진 기준 특징 사전 계산(202, 뒤에서 계산) |
 | POST | /prefetch | 반납 스캔 순간 기준 특징 8개를 메모리에 올림(202) |
@@ -77,10 +77,31 @@ class Service:
         self.background = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bg")
         self.spring = spring
         self.poller: ActiveModelPoller | None = None
+        self.load_error: str | None = None
+        self._stopping = threading.Event()
 
-    def start(self, load_models: bool = True, poll: bool = True) -> None:
-        if load_models and not self.registry.ready:
-            self.registry.load_initial()
+    def load_models(self, retry_seconds: float = 30.0) -> bool:
+        """모델을 로드한다. 실패하면(MinIO에 모델 파일이 없음, 접속 실패 등) 로그를 남기고 다시 시도한다.
+
+        파드를 다시 띄우지 않아도 모델 파일을 올리면 다음 시도에서 Ready가 된다. 그동안 /readyz는 503이고
+        본문 result.loadError에 마지막 실패 이유가 담긴다.
+        """
+        while not self.registry.ready:
+            try:
+                self.registry.load_initial()
+                self.load_error = None
+            except Exception as e:
+                self.load_error = f"{type(e).__name__}: {e}"
+                log.exception(
+                    "모델 로드 실패(%s초 뒤 다시 시도) key=%s", retry_seconds, self.settings.backbone_key
+                )
+                if self._stopping.wait(retry_seconds):
+                    return False
+        return True
+
+    def start(self, load_models: bool = True, poll: bool = True, retry_seconds: float = 30.0) -> None:
+        if load_models and not self.load_models(retry_seconds):
+            return
         if self.spring is not None:
             self.poller = ActiveModelPoller(
                 self.registry, self.spring, self.settings.active_model_poll_seconds
@@ -90,6 +111,7 @@ class Service:
                 self.poller.start()
 
     def stop(self) -> None:
+        self._stopping.set()
         if self.poller:
             self.poller.stop()
         self.background.shutdown(wait=False, cancel_futures=True)
@@ -163,14 +185,17 @@ def create_app(
         log.exception("처리하지 못한 오류")
         return fail(ResultCode.SERVER_ERROR)
 
+    # 쿠버네티스 프로브는 /healthz·/readyz(deploy apps/ml-inference), 사람이 볼 때는 /health/* 도 같다.
+    @app.get("/healthz")
     @app.get("/health/live")
     def live():
         return ok({"status": "UP"})
 
+    @app.get("/readyz")
     @app.get("/health/ready")
     def ready():
         if not svc.registry.ready:
-            return fail(ResultCode.NOT_READY)
+            return fail(ResultCode.NOT_READY, {"loadError": svc.load_error} if svc.load_error else None)
         m = svc.registry.models
         return ok(
             {
@@ -234,4 +259,15 @@ def create_app(
 def default_app() -> FastAPI:  # pragma: no cover - uvicorn --factory 진입점
     """`uvicorn --factory inference.app:default_app`로 실행한다. 설정은 환경변수에서 읽는다."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    return create_app()
+    s = get_settings()
+    # 비밀값(키, 토큰)은 찍지 않는다. 토큰은 설정 여부만.
+    log.info(
+        "시작 profile=%s storage=%s endpoint=%s bucket=%s backbone=%s token=%s",
+        s.app_profile,
+        s.storage_backend,
+        s.minio_endpoint,
+        s.minio_bucket,
+        s.backbone_key,
+        "set" if s.internal_token else "unset",
+    )
+    return create_app(s)

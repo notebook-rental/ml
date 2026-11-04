@@ -14,7 +14,7 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 app \
-    && mkdir -p /var/cache/ml-models && chown app /var/cache/ml-models
+    && mkdir -p /var/cache/models && chown app /var/cache/models
 COPY --from=build /install /usr/local
 WORKDIR /app
 COPY --chown=app inference/config ./inference/config
