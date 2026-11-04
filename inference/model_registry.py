@@ -16,7 +16,7 @@ import threading
 from pathlib import Path
 
 from common.messages import ActiveModels
-from common.storage import Storage
+from common.storage import ObjectNotFound, Storage
 from inference.compare import Models
 from inference.config import Settings
 from inference.pipeline.engine import create_session
@@ -69,14 +69,44 @@ class ModelRegistry:
         local.parent.mkdir(parents=True, exist_ok=True)
         tmp = local.with_suffix(local.suffix + ".part")
         log.info("모델 파일 내려받는 중 key=%s → %s", key, local)
-        data = self.storage.get_bytes(key)
+        seeded = False
+        try:
+            data = self.storage.get_bytes(key)
+        except ObjectNotFound:
+            url = self.settings.backbone_url if key == self.settings.backbone_key else ""
+            if not url or not sha256:
+                raise
+            log.warning("버킷에 %s 가 없습니다. 공개 주소에서 받습니다: %s", key, url)
+            data = self.download_url(url)
+            seeded = True
         log.info("모델 파일 받음 key=%s (%.1f MB)", key, len(data) / 1e6)
         tmp.write_bytes(data)
         if sha256 and sha256_file(tmp) != sha256:
             tmp.unlink(missing_ok=True)
             raise ModelIntegrityError(f"sha256 불일치: {key}")
         tmp.replace(local)
+        if seeded:
+            self._seed(key, data)
         return local
+
+    def download_url(self, url: str) -> bytes:  # pragma: no cover - 실제 인터넷 다운로드는 운영에서
+        import httpx
+
+        with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(30.0, read=120.0)) as c:
+            r = c.get(url)
+            r.raise_for_status()
+            return r.content
+
+    def _seed(self, key: str, data: bytes) -> None:
+        """받은 모델(해시 확인 끝)을 버킷에도 넣어 둔다. 실패해도 로컬 캐시로 계속 동작한다."""
+        put = getattr(self.storage, "put_new_model", None)
+        if put is None:
+            return
+        try:
+            if put(key, data):
+                log.info("버킷에 모델 파일을 채웠습니다 key=%s", key)
+        except Exception as e:
+            log.warning("버킷에 모델 파일을 채우지 못했습니다(로컬 캐시로 계속) key=%s: %s", key, e)
 
     def _session(self, key: str, sha256: str | None = None):
         s = self.settings

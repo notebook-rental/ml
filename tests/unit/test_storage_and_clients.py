@@ -28,6 +28,10 @@ def test_local_storage(tmp_path):
         s.get_bytes("derived/none")
     with pytest.raises(StorageError):
         s.put_bytes("originals/x.jpg", b"x")  # 원본은 쓸 수 없다(헌법 II)
+    assert s.put_new_model("models/a.onnx", b"a") and not s.put_new_model("models/a.onnx", b"b")
+    assert s.get_bytes("models/a.onnx") == b"a"
+    with pytest.raises(StorageError):
+        s.put_new_model("models/../originals/x.jpg", b"x")
     with pytest.raises(StorageError):
         s.get_bytes("../secret")
 
@@ -45,6 +49,11 @@ def test_s3_storage():
         s.get_bytes("derived/none")
     with pytest.raises(StorageError):
         s.put_bytes("originals/p.jpg", b"overwrite")
+    # 모델 채우기: models/ 아래, 비어 있을 때만
+    assert s.put_new_model("models/m.onnx", b"m1") is True
+    assert s.put_new_model("models/m.onnx", b"m2") is False and s.get_bytes("models/m.onnx") == b"m1"
+    with pytest.raises(StorageError):
+        s.put_new_model("originals/p.jpg", b"x")
     s.client = boto3.client("s3", region_name="us-east-1")
     s.bucket = "no-such-bucket"
     with pytest.raises(Exception):  # noqa: B017 - 404가 아닌 오류는 그대로 올린다
