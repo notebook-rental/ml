@@ -1,0 +1,6 @@
+.venv
+.data
+.git
+tests
+**/__pycache__
+*.onnx
