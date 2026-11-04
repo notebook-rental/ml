@@ -1,0 +1,49 @@
+# 운영용 DINOv2 ViT-S/14 ONNX 파일을 만들어 GitHub Release에 올린다(손으로 한 번 실행).
+#
+# 왜 여기서: 운영 이미지·서버에는 PyTorch를 넣지 않는다. GitHub 러너는 공식 가중치(dl.fbaipublicfiles.com)를
+# 받을 수 있으므로 여기서 ONNX로 바꾼다. 비밀값이 필요 없고, 결과 파일은 공개 Release에 붙는다.
+#
+# 실행: Actions → export-model → Run workflow
+# 다음: Release에서 model.onnx를 받아 MinIO 버킷 notebook-rental 의 models/dinov2-s14/model.onnx 로 올린다.
+#      (파드는 30초마다 다시 시도하므로 올리면 다시 띄우지 않아도 Ready가 된다)
+name: export-model
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release 태그
+        default: model-dinov2-s14-v1
+permissions:
+  contents: write
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: PyTorch(CPU) 설치
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.5.1"
+          pip install "onnx>=1.16" "onnxruntime>=1.18" "numpy<3"
+      - name: ONNX로 내보내기
+        run: python tools/export_dinov2.py --out model.onnx --width 448 --height 336
+      - name: 결과 확인(입력 1x3x336x448 → 출력 1x768x384)
+        run: |
+          python - <<'PY'
+          import numpy as np, onnxruntime as ort
+          s = ort.InferenceSession("model.onnx", providers=["CPUExecutionProvider"])
+          y = s.run(None, {"pixel_values": np.zeros((1, 3, 336, 448), np.float32)})[0]
+          print("output", y.shape)
+          assert y.shape == (1, 768, 384), y.shape
+          assert np.isfinite(y).all()
+          PY
+          sha256sum model.onnx | tee model.onnx.sha256
+          ls -l model.onnx
+      - name: Release에 올리기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.tag }}" model.onnx model.onnx.sha256 \
+            --title "DINOv2 ViT-S/14 ONNX (${{ inputs.tag }})" \
+            --notes "공식 DINOv2 ViT-S/14 가중치(Apache-2.0, facebookresearch/dinov2)를 ONNX로 내보낸 파일. 입력 pixel_values [1,3,336,448], 출력 patch_tokens [1,768,384]. MinIO models/dinov2-s14/model.onnx 로 올린다. sha256: $(cut -d' ' -f1 model.onnx.sha256)"
