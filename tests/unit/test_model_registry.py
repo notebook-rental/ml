@@ -82,3 +82,55 @@ def test_poller(registry):
     bad = ActiveModelPoller(registry, _Client(error=ConnectionError("down")), 30)
     assert bad.poll_once() is False
     bad.stop()
+
+
+def test_seed_from_url_when_bucket_empty(settings, storage, patch_mean_path):
+    """버킷에 백본이 없으면 공개 주소에서 받아 해시를 확인하고, 버킷 models/ 에도 한 번 채운다."""
+    data = patch_mean_path.read_bytes()
+    settings.backbone_sha256 = hashlib.sha256(data).hexdigest()
+    settings.backbone_url = "https://example.invalid/model.onnx"
+    reg = ModelRegistry(storage, settings)
+    calls = []
+    reg.download_url = lambda url: calls.append(url) or data
+    reg.load_initial()
+    assert reg.ready and calls == [settings.backbone_url]
+    assert storage.get_bytes(settings.backbone_key) == data
+
+
+def test_seed_rejects_bad_hash_and_never_seeds(settings, storage, patch_mean_path):
+    settings.backbone_sha256 = "0" * 64
+    settings.backbone_url = "https://example.invalid/model.onnx"
+    reg = ModelRegistry(storage, settings)
+    reg.download_url = lambda url: b"not a model"
+    with pytest.raises(ModelIntegrityError):
+        reg.load_initial()
+    assert not storage.exists(settings.backbone_key)
+
+
+def test_no_url_or_hash_keeps_not_found(settings, storage):
+    from common.storage import ObjectNotFound
+
+    settings.backbone_url = "https://example.invalid/model.onnx"
+    settings.backbone_sha256 = ""  # 해시 없이 인터넷 파일을 믿지 않는다
+    with pytest.raises(ObjectNotFound):
+        ModelRegistry(storage, settings).load_initial()
+
+
+def test_seed_failure_is_not_fatal(settings, storage, patch_mean_path):
+    data = patch_mean_path.read_bytes()
+    settings.backbone_sha256 = hashlib.sha256(data).hexdigest()
+    settings.backbone_url = "https://example.invalid/model.onnx"
+
+    class NoWrite:
+        def get_bytes(self, key):
+            return storage.get_bytes(key)
+
+        def put_new_model(self, key, data):
+            raise PermissionError("AccessDenied")
+
+    reg = ModelRegistry(NoWrite(), settings)
+    reg.download_url = lambda url: data
+    reg.load_initial()
+    assert reg.ready
+    reg2 = ModelRegistry(type("Plain", (), {"get_bytes": NoWrite.get_bytes})(), settings)
+    reg2._seed("models/x.onnx", data)  # put_new_model이 없는 저장소는 건너뛴다

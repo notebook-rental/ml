@@ -44,6 +44,13 @@ def check_writable(key: str) -> None:
         raise StorageError(f"ML 서비스는 derived/ 폴더에만 쓸 수 있습니다: {key}")
 
 
+def check_model_seed(key: str) -> None:
+    """처음 배포할 때 모델 파일이 버킷에 없으면 ML 서비스가 공개 Release에서 받아 models/ 에 한 번 채운다.
+    models/ 아래만, 그리고 비어 있을 때만(덮어쓰지 않음) 허용한다."""
+    if ".." in key.split("/") or key.startswith("/") or not key.startswith("models/"):
+        raise StorageError(f"모델 파일은 models/ 아래에만 채울 수 있습니다: {key}")
+
+
 class LocalStorage:
     def __init__(self, root: str | Path):
         self.root = Path(root)
@@ -69,6 +76,15 @@ class LocalStorage:
 
     def exists(self, key: str) -> bool:
         return self._path(key).is_file()
+
+    def put_new_model(self, key: str, data: bytes) -> bool:
+        check_model_seed(key)
+        p = self._path(key)
+        if p.is_file():
+            return False
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+        return True
 
 
 class S3Storage:
@@ -105,6 +121,13 @@ class S3Storage:
     def put_bytes(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> None:
         check_writable(key)
         self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type)
+
+    def put_new_model(self, key: str, data: bytes) -> bool:
+        check_model_seed(key)
+        if self.exists(key):
+            return False
+        self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType="application/octet-stream")
+        return True
 
     def exists(self, key: str) -> bool:
         from botocore.exceptions import ClientError

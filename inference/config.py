@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     backbone_name: str = "dinov2-s14@1"
     backbone_key: str = "models/dinov2-s14/model.onnx"
     backbone_sha256: str = ""
+    # 버킷에 백본 파일이 없을 때 받아 올 공개 주소(ml repo Release, export-model 워크플로가 만든다).
+    # 받은 파일은 sha256을 확인하고 버킷 models/ 에 한 번 채운다. 비우면 이 기능을 쓰지 않는다.
+    backbone_url: str = ""
     sam_encoder_key: str = ""  # 비우면 고전 방식(GrabCut) 노트북 영역 분리
     sam_decoder_key: str = ""
 
