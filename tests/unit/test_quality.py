@@ -52,3 +52,23 @@ def test_multiple_qr(settings):
 
 def test_laptop_box_none_on_blank():
     assert laptop_box(np.zeros((300, 400), np.uint8)) is None
+
+
+def test_barcode_label_counts_as_label_on_top(settings):
+    """자산 번호 라벨이 바코드여도 상판 컷을 통과시키고 값을 돌려준다(spec 002)."""
+    img = synth.base_scene(0, qr_value=None).image.copy()
+    bc = synth.barcode_image("NB26110001")
+    h, w = bc.shape[:2]
+    img[300 : 300 + h, 500 : 500 + w] = bc
+    r = check_quality(img, "top", settings)
+    assert "qr_not_found" not in r.reasons
+    assert [q.value for q in r.qr] == ["NB26110001"]
+    assert len(r.qr[0].corners) == 4
+
+
+def test_barcode_not_searched_on_other_shots(settings):
+    img = synth.base_scene(0, qr_value=None).image.copy()
+    bc = synth.barcode_image("NB26110001")
+    h, w = bc.shape[:2]
+    img[300 : 300 + h, 500 : 500 + w] = bc
+    assert check_quality(img, "hinge", settings).qr == []

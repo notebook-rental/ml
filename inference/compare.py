@@ -8,7 +8,7 @@
 5. DINOv2 패치 특징 → 기준과 주변 최근접 거리(이상 점수)
 6. SSIM 차분(가는 변화)
 7. 점수 합치기 → 임계값 → 덩어리 → 다각형, QR·노트북 밖·반사 제외
-8. QR 사라짐/바뀜 → qr_tampered 후보, 기존 손상 겹침, 유형 추정
+8. 라벨(QR·바코드) 사라짐/바뀜 → qr_tampered 후보, 기존 손상 겹침, 유형 추정
 9. 좌표를 원본 픽셀로 바꿔 응답, 정렬 결과·점수 맵을 derived/comparisons/에 저장
 
 같은 입력이면 결과가 같다(멱등). api가 재시도해도 안전하다.
@@ -41,7 +41,7 @@ from inference.pipeline.imageutil import (
 from inference.pipeline.normalize import match_color, normalize_pair
 from inference.pipeline.patch_features import Backbone, neighbor_distance
 from inference.pipeline.postprocess import combine, extract_regions, specular, to_coords
-from inference.pipeline.qr import detect_qr, qr_polygon_mask
+from inference.pipeline.qr import detect_labels, qr_polygon_mask
 from inference.pipeline.segment import Segmenter
 from inference.pipeline.ssim import ssim_diff
 from inference.pipeline.typing import guess_type
@@ -121,7 +121,7 @@ def _compare(
     target_qr: list[QrCode] = []
     if req.shotType == "top" or baseline_qr:
         with timer.step("qr"):
-            target_qr = detect_qr(target_full)
+            target_qr = detect_labels(target_full)
 
     with timer.step("align"):
         kps = align.extract(t_gray)

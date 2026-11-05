@@ -13,6 +13,8 @@ dependencies = [
   "httpx>=0.27",
   "numpy>=1.26,<3",
   "opencv-python-headless>=4.10",
+  # 자산 번호 바코드 라벨(Code128) 해독. OpenCV는 Code128을 못 읽는다
+  "zxing-cpp>=3.0",
   "onnxruntime>=1.18",
   "boto3>=1.34",
 ]
