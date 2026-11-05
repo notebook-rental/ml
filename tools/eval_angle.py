@@ -547,7 +547,8 @@ def run_bank(dir_: Path, backbone: str, synthetic: bool) -> str:
             for th in SWEEP:
                 regs = extract_regions(score, valid, th, s.min_region_px, refl)
                 hits = sum(1 for r in regs if sm is not None and ((r.mask > 0) & (sm > 0)).any())
-                res.append((len(regs) - hits, hits > 0))
+                area = sum(r.area for r in regs) / max(1, int((valid > 0).sum()))
+                res.append((len(regs) - hits, hits > 0, area))
             rows.append((sh, case, mean, ms, res))
             print("h", end="", file=sys.stderr, flush=True)
         print(file=sys.stderr)
@@ -561,7 +562,9 @@ def run_bank(dir_: Path, backbone: str, synthetic: bool) -> str:
         for sh, case, mean, ms, res in rows:
             if case == "real":
                 lines.append(
-                    f"| {sh} | real | {mean:.3f} | {ms} | " + " | ".join(str(c) for c, _ in res) + " |"
+                    f"| {sh} | real | {mean:.3f} | {ms} | "
+                    + " | ".join(f"{c} ({a:.0%})" for c, _, a in res)
+                    + " |"
                 )
         if synthetic:
             lines += [
