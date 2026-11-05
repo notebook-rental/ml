@@ -85,3 +85,21 @@ def test_runner_from_config_claims_with_worker_token(models, settings):
     )
     assert r.run_once()
     assert api.completed[5]["workerId"] == "ai-pc"
+
+
+def test_run_log_goes_to_file_too(worker_home):
+    import logging
+
+    path = cli.attach_log_file()
+    cli.attach_log_file()  # 두 번 불러도 한 번만 붙는다
+    root = logging.getLogger()
+    mine = [h for h in root.handlers if getattr(h, "baseFilename", None) == str(path)]
+    try:
+        assert len(mine) == 1
+        logging.getLogger("inference.jobs").info("작업 완료 jobId=1 type=selftest")
+        mine[0].flush()
+        assert "작업 완료 jobId=1" in path.read_text(encoding="utf-8")
+    finally:
+        for h in mine:
+            root.removeHandler(h)
+            h.close()
