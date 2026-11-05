@@ -22,6 +22,11 @@ dependencies = [
 [project.optional-dependencies]
 # 인텔 CPU에서 더 빠를 수 있는 추론 엔진. 추론 튜닝에서 비교한다.
 openvino = ["openvino>=2024.3"]
+# NVIDIA GPU(ENGINE=cuda). GPU PC에서만 쓴다. onnxruntime(CPU판)과 한 환경에 같이 깔면 충돌하므로
+# 설치 뒤 `pip uninstall -y onnxruntime onnxruntime-gpu` → `pip install "onnxruntime-gpu[cuda,cudnn]>=1.22"` 순서로 정리한다(docs/gpu-worker.md).
+# [cuda,cudnn]은 CUDA·cuDNN 실행 파일을 pip로 같이 받는다(CUDA Toolkit 설치 불필요).
+# RTX 5060 Ti(Blackwell, sm_120)는 CUDA 12.8+ 빌드가 필요해 1.22 이상을 쓴다.
+gpu = ["onnxruntime-gpu[cuda,cudnn]>=1.22"]
 # 모델을 ONNX로 내보낼 때만 필요하다(운영 이미지에는 넣지 않는다).
 export = ["torch>=2.4", "onnx>=1.16", "timm>=1.0"]
 dev = [
@@ -37,7 +42,7 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["common*", "inference*", "bench*"]
+include = ["common*", "inference*", "bench*", "worker*"]
 
 # 프로파일 설정 파일(local.env, prod.env)도 패키지에 넣는다. 빠지면 운영에서 prod.env가 조용히 무시된다.
 [tool.setuptools.package-data]

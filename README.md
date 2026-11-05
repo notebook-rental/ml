@@ -10,6 +10,7 @@
 |------|------|
 | [docs/pipeline.md](docs/pipeline.md) | 비교 파이프라인이 단계별로 무엇을 왜 하는지(초보자용 설명) |
 | [docs/benchmark.md](docs/benchmark.md) | 속도 측정 방법과 결과(tasks T001) |
+| [docs/gpu-worker.md](docs/gpu-worker.md) | 집 AI PC의 GPU로 무거운 작업 처리(GPU 워커 설치·실행, spec 003) |
 | 계약 | docs 저장소 `contracts/ml-service.md`, `contracts/api-response.md` |
 
 ## 한눈에 보기
@@ -37,6 +38,8 @@
 | DINOv2 | Meta가 공개한 사전학습 이미지 모델(Apache-2.0). 사진을 14×14px 조각(패치)으로 나눠 조각마다 "생김새"를 숫자 벡터로 낸다 |
 | ONNX / ONNX Runtime | 신경망을 저장하는 표준 파일 형식 / 그 파일을 CPU에서 빠르게 실행하는 라이브러리. 운영 서버에 PyTorch가 필요 없다 |
 | OpenVINO | 인텔 CPU용 추론 엔진. 인텔 CPU에서는 ONNX Runtime보다 빠를 수 있어 벤치마크로 비교한다 |
+| CUDA 실행 공급자 | ONNX Runtime이 NVIDIA GPU로 계산하게 하는 부품(`CUDAExecutionProvider`). `ENGINE=cuda`, GPU 워커에서 쓴다 |
+| GPU 워커 | 집 AI PC에서 도는 프로그램. api 작업 대기열(`ml_job`)에서 무거운 작업을 가져가 GPU로 처리한다([docs/gpu-worker.md](docs/gpu-worker.md)) |
 | SSIM | 두 사진의 작은 창마다 밝기·대비·구조가 같은 정도(0~1). 가는 스크래치처럼 작은 변화를 잡는다 |
 | 후보(finding) | 모델이 "바뀐 것 같다"고 표시한 영역. 손상인지는 직원이 판정한다 |
 | 멱등(idempotent) | 같은 요청을 여러 번 보내도 결과가 같다. api가 재시도해도 안전하다 |
@@ -44,7 +47,8 @@
 ## 폴더 구조
 
 ```
-common/                 api와 주고받는 본문(스키마), 저장소(MinIO) 접근, Spring 내부 API 클라이언트
+common/                 api와 주고받는 본문(스키마), 저장소(MinIO) 접근, Spring 내부 API 클라이언트, 작업 API 클라이언트(jobs_client.py)
+worker/                 집 AI PC GPU 워커 CLI(login, check, run, enqueue, jobs)
 inference/
   app.py                FastAPI HTTP 서버(엔드포인트 목록은 아래)
   config.py             설정(APP_PROFILE=local|prod, 환경변수)
@@ -52,6 +56,7 @@ inference/
   quality.py            촬영 품질 검사(흐림·노출·구도·자산 번호 라벨)
   compare.py            컷 하나 비교(파이프라인 조립)
   model_registry.py     모델 내려받기·sha256 검증·워밍업·무중단 교체
+  jobs.py               작업 대기열 처리기(selftest, baseline_features)와 실행 루프. GPU 워커와 파드가 같이 쓴다
   response.py           공통 응답 형식(header/result)
   pipeline/
     segment.py          노트북 영역 분리(경량 SAM 또는 GrabCut)
@@ -64,10 +69,11 @@ inference/
     existing_damage.py  기존 손상과 겹침 판정
     typing.py           유형 추정(모양 규칙)
     baseline_cache.py   기준 특징 사전 계산·저장(npz)·메모리 LRU
-    engine.py           ONNX Runtime / OpenVINO 실행
+    engine.py           ONNX Runtime(CPU·CUDA) / OpenVINO 실행
 bench/bench_compare.py  속도 측정(tasks T001)
 tools/
   build_vit_onnx.py     DINOv2-S와 같은 구조의 무작위 가중치 ONNX(속도 측정·CI용)
+  setup-gpu-worker.ps1  AI PC(Windows)에 GPU 워커 설치, run-gpu-worker.ps1 계속 켜 두기
   export_dinov2.py      공식 DINOv2 가중치 → ONNX(운영용). GitHub Actions의 export-model 워크플로가 실행해 Release에 올린다
 tests/
   unit/                 부품별 테스트
@@ -111,7 +117,8 @@ tests/
 | `API_BASE_URL`, `INTERNAL_TOKEN` | `http://api:8080`, (Secret) | Spring 내부 API(활성 모델 30초마다 확인) |
 | `BACKBONE_KEY`, `BACKBONE_SHA256` | `models/dinov2-s14/model.onnx`, 빈 값 | DINOv2 ONNX 위치와 해시(해시를 주면 검증) |
 | `SAM_ENCODER_KEY`, `SAM_DECODER_KEY` | 빈 값 | 경량 SAM ONNX. 비우면 GrabCut으로 노트북 영역을 딴다 |
-| `ENGINE` | `onnxruntime` | `openvino`도 가능(`pip install ".[openvino]"`) |
+| `ENGINE` | `onnxruntime` | `openvino`(`pip install ".[openvino]"`), `cuda`(NVIDIA GPU, `onnxruntime-gpu`. GPU를 못 찾으면 CPU로 내려가고 경고) |
+| `JOB_POLL_SECONDS` | 0(끔), prod 10 | 작업 대기열 확인 간격. 파드는 만든 지 2분 지난 작업만 받는다(GPU 워커가 먼저) |
 | `INTRA_OP_THREADS` | 0(=CPU 수) | 요청 하나가 쓰는 스레드 |
 | `MAX_CONCURRENT_COMPARES` | 2 | 넘으면 503 |
 | `BASELINE_LRU_SIZE` | 240 | 메모리에 올려 둘 기준 사진 수(노트북 30대 × 8컷, 약 1.5GB). 파드 메모리에 맞춰 줄인다 |

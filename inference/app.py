@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -31,6 +32,7 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
 from common.callback import SpringClient
+from common.jobs_client import JobsClient
 from common.messages import (
     ActiveModels,
     BaselineFeaturesRequest,
@@ -41,6 +43,7 @@ from common.messages import (
 from common.storage import LocalStorage, ObjectNotFound, S3Storage, Storage
 from inference import compare as compare_mod
 from inference.config import Settings, _profile_env_file, get_settings
+from inference.jobs import JobContext, JobRunner
 from inference.model_registry import ActiveModelPoller, ModelRegistry
 from inference.pipeline.baseline_cache import BaselineStore, cache_key
 from inference.pipeline.imageutil import ImageDecodeError, decode
@@ -77,6 +80,7 @@ class Service:
         self.background = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bg")
         self.spring = spring
         self.poller: ActiveModelPoller | None = None
+        self.jobs: JobRunner | None = None
         self.load_error: str | None = None
         self._stopping = threading.Event()
 
@@ -109,11 +113,31 @@ class Service:
             self.poller.poll_once()
             if poll:  # pragma: no cover - 실제 주기 확인은 운영에서
                 self.poller.start()
+        if poll and self.settings.job_poll_seconds > 0 and self.settings.internal_token:  # pragma: no cover
+            self.start_jobs(
+                JobsClient.internal(self.settings.api_base_url, self.settings.internal_token)
+            ).start()
+
+    def start_jobs(self, client: JobsClient) -> JobRunner:
+        """작업 대기열 루프(CPU 대체 처리, docs specs/003-gpu-worker US3).
+
+        api는 이 파드에 만든 지 2분 지난 작업만 준다. 집 AI PC GPU 워커가 켜져 있으면 그 전에 가져가므로 여기까지 오지 않는다.
+        """
+        worker_id = os.environ.get("HOSTNAME", "ml-inference")
+        self.jobs = JobRunner(
+            client,
+            lambda: JobContext(self.registry.models, self.settings, self.storage, worker_id),
+            worker_id,
+            poll_seconds=self.settings.job_poll_seconds,
+        )
+        return self.jobs
 
     def stop(self) -> None:
         self._stopping.set()
         if self.poller:
             self.poller.stop()
+        if self.jobs:
+            self.jobs.stop()
         self.background.shutdown(wait=False, cancel_futures=True)
 
     # ---- 뒤에서 하는 일 ----
