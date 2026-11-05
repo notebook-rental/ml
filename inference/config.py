@@ -65,7 +65,19 @@ class Settings(BaseSettings):
     backbone_input: str = ""  # "448x336"처럼 주면 그 크기로(입력 크기가 고정이 아닌 모델일 때)
     max_reproj_error_px: float = 8.0
     min_inliers: int = 25
-    baseline_lru_size: int = 240  # 기준 특징 메모리 캐시(사진 수). 노트북 30대 × 8컷
+    # 기준 특징 메모리 캐시(사진 수). 004 기억 장소 때문에 1장 ≈ 3MB → 96장(노트북 12대) ≈ 300MB
+    baseline_lru_size: int = 96
+
+    # 비교 방식(docs specs/004): bank = 조각 맞추기(기준 사진 전부, 각도 무관), aligned = 예전 방식(정확히 겹친 뒤 비교)
+    compare_mode: Literal["bank", "aligned"] = "bank"
+    bank_threshold: float = 0.65  # 이상 점수(코사인 거리 / dino_scale) 임계값. research 결과 2로 보정
+    bank_ssim_threshold: float = (
+        0.35  # 겹쳐졌을 때 SSIM 차분(× ssim_gain) 임계값. 예전 방식의 threshold와 같은 값
+    )
+    bank_max_mean_distance: float = (
+        0.45  # 노트북 조각 평균 거리가 이보다 크면 다른 노트북(no_matching_baseline)
+    )
+    bank_min_laptop_ratio: float = 0.05  # 노트북 영역이 사진의 이 비율보다 작으면 laptop_not_found
 
     # 품질 검사 임계값(초기 평가 세트로 보정한다, research R5)
     quality_blur_min: float = 60.0

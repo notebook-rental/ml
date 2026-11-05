@@ -171,10 +171,37 @@ def test_existing_damage_overlap(storage, put, models, settings, scene, baseline
     assert damage and damage[0].overlapsDamageId == 77
 
 
+def _other_object() -> np.ndarray:
+    """노트북이 아닌 물건: 초록 판 위 빨간 무늬(경계는 많지만 기준 사진 어디에도 없는 색)."""
+    import cv2
+
+    img = np.full((1200, 1600, 3), (40, 160, 40), np.uint8)
+    for y in range(250, 950, 20):
+        for x in range(300, 1300, 20):
+            color = (30, 30, 230) if (x // 20 + y // 20) % 2 else (20, 230, 240)
+            cv2.rectangle(img, (x, y), (x + 19, y + 19), color, -1)
+    return img
+
+
 def test_unrelated_photo_not_comparable(storage, put, models, settings, baseline_img):
+    r = _run(storage, put, models, settings, baseline_img, _other_object(), qr=False, shot="keyboard")
+    assert r.status == "not_comparable"
+    assert r.reason == "no_matching_baseline"
+    assert r.findings == []
+
+
+def test_no_laptop_not_comparable(storage, put, models, settings, baseline_img):
+    blank = np.full((1200, 1600, 3), 128, np.uint8)
+    r = _run(storage, put, models, settings, baseline_img, blank, qr=False, shot="keyboard")
+    assert r.status == "not_comparable" and r.reason == "laptop_not_found"
+
+
+def test_aligned_mode_keeps_old_reasons(storage, put, models, settings, baseline_img):
+    """compare_mode=aligned(예전 방식)는 정렬 실패 이유를 그대로 낸다."""
     rng = np.random.default_rng(0)
     noise = (rng.random((1200, 1600, 3)) * 255).astype(np.uint8)
-    r = _run(storage, put, models, settings, baseline_img, noise, qr=False, shot="keyboard")
+    old = settings.model_copy(update={"compare_mode": "aligned"})
+    r = _run(storage, put, models, old, baseline_img, noise, qr=False, shot="keyboard")
     assert r.status == "not_comparable"
     assert r.reason in {
         "too_few_matches",
@@ -182,7 +209,25 @@ def test_unrelated_photo_not_comparable(storage, put, models, settings, baseline
         "alignment_error_too_large",
         "homography_failed",
     }
-    assert r.findings == []
+
+
+def test_rotated_and_tilted_view_is_compared(storage, put, models, settings, scene, baseline_img):
+    """대충 찍은 사진(90° 돌리고 비스듬히): 예전 방식은 비교 불가였지만 조각 맞추기는 done이고 손상을 찾는다(004)."""
+    import cv2
+
+    d = synth.Damage("sticker", (500, 400, 620, 480))
+    img = synth.add_damage(scene.image, d)
+    h, w = img.shape[:2]
+    src = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+    dst = np.float32([[80, 40], [w - 260, 120], [w - 120, h - 60], [40, h - 160]])
+    tilted = cv2.warpPerspective(
+        img, cv2.getPerspectiveTransform(src, dst), (w, h), borderMode=cv2.BORDER_REFLECT
+    )
+    target = np.ascontiguousarray(np.rot90(tilted))
+    r = _run(storage, put, models, settings, baseline_img, target)
+    assert r.status == "done" and r.method in {"aligned", "patch"}
+    damage = [f for f in r.findings if f.predictedType != "qr_tampered"]
+    assert damage, "스티커를 찾아야 한다"
 
 
 def test_idempotent(storage, put, models, settings, scene, baseline_img):

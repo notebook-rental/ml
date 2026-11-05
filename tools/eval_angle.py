@@ -592,6 +592,122 @@ def run_bank(dir_: Path, backbone: str, synthetic: bool) -> str:
         shutil.rmtree(work, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- 운영 코드(compare_mode=bank) 그대로 측정
+
+PROD_TILTS = (0, 20, 40)
+
+
+def run_prod(dir_: Path, backbone: str, synthetic: bool) -> str:
+    return "\n\n".join(_run_prod(dir_, backbone, synthetic, st) for st in PROD_SSIM)
+
+
+PROD_SSIM = (0.35, 0.7)  # 겹쳐졌을 때 SSIM(가는 변화) 임계값 후보
+
+
+def _run_prod(dir_: Path, backbone: str, synthetic: bool, ssim_th: float) -> str:
+    """운영 compare()를 bank 방식·기준 전체로 돌리고 임계값별 가짜 후보·찾음을 센다(docs specs/004 T404·T414)."""
+    from common.messages import BankPhoto
+
+    work = Path(tempfile.mkdtemp(prefix="eval-prod-"))
+    try:
+        h = Harness(backbone, work)
+        s = Settings(
+            storage_backend="local",
+            local_storage_root=str(work),
+            app_profile="test",
+            compare_mode="bank",
+            bank_ssim_threshold=ssim_th,
+        )
+        bank = []
+        for i, sh in enumerate(SHOTS):
+            bp = dir_ / "baseline" / f"{sh}.jpg"
+            if bp.exists():
+                key = f"photos/baseline/{sh}.jpg"
+                h.put(key, decode(bp.read_bytes()))
+                bank.append(BankPhoto(photoId=1000 + i, imageKey=key, shotType=sh))
+        by_shot = {b.shotType: b for b in bank}
+        cases = []
+        for sh in SHOTS:
+            rp = dir_ / "return" / f"{sh}.jpg"
+            if rp.exists():
+                cases.append((sh, "real", decode(rp.read_bytes()), None))
+            if synthetic and sh in by_shot:
+                bimg = decode((dir_ / "baseline" / f"{sh}.jpg").read_bytes())
+                for d in PROD_TILTS:
+                    img, _ = tilt(bimg, d)
+                    img = np.ascontiguousarray(np.rot90(img)) if d == 40 else img  # 40°는 세로로도 돌린다
+                    cases.append((sh, f"tilt{d}", img, draw_scratch(img, seed=SHOTS.index(sh) * 100 + d)))
+        rows = []
+        for sh, case, img, smask in cases:
+            tkey = f"photos/target/{sh}-{case}.jpg"
+            h.put(tkey, img)
+            base = by_shot.get(sh) or bank[0]
+            res = []
+            meta = None
+            for th in SWEEP:
+                h.n += 1
+                req = CompareRequest(
+                    comparisonId=f"prod-{h.n}",
+                    shotType=sh,
+                    baselinePhotoId=base.photoId,
+                    baselineImageKey=base.imageKey,
+                    targetImageKey=tkey,
+                    bankPhotos=bank,
+                    params={"threshold": th},
+                )
+                t = time.perf_counter()
+                r = compare(req, h.storage, h.baselines, h.models, s)
+                ms = round((time.perf_counter() - t) * 1000)
+                hits = 0
+                if smask is not None:
+                    hits = sum(1 for f in r.findings if _poly_hits(f.geometry.coords, smask))
+                matched = next(
+                    (b.shotType for b in bank if str(b.photoId) == str(r.matchedBaselinePhotoId)), "-"
+                )
+                meta = (r.status, r.reason or r.method, matched, ms)
+                res.append((len(r.findings) - hits, hits > 0))
+            rows.append((sh, case, meta, res))
+            print("p", end="", file=sys.stderr, flush=True)
+        print(file=sys.stderr)
+        head = " | ".join(f"가짜@{t}" for t in SWEEP)
+        lines = [
+            f"## 운영 코드(bank, SSIM {ssim_th}) 실제 반납 사진",
+            "",
+            f"| 컷 | 상태 | 방식·이유 | 고른 기준 | ms | {head} |",
+            "|---|---|---|---|---|" + "---|" * len(SWEEP),
+        ]
+        for sh, case, (st, why, matched, ms), res in rows:
+            if case == "real":
+                lines.append(
+                    f"| {sh} | {st} | {why} | {matched} | {ms} | " + " | ".join(str(c) for c, _ in res) + " |"
+                )
+        lines.append("")
+        lines.append(
+            "실제 컷 가짜 후보 합계: "
+            + ", ".join(
+                f"@{t}={sum(r[3][i][0] for r in rows if r[1] == 'real')}" for i, t in enumerate(SWEEP)
+            )
+        )
+        if synthetic:
+            lines += [
+                "",
+                f"## 운영 코드(bank, SSIM {ssim_th}) 합성 시험(40°는 90° 회전도)",
+                "",
+                "| 기울기 | " + " | ".join(f"찾음·가짜@{t}" for t in SWEEP) + " |",
+                "|---|" + "---|" * len(SWEEP),
+            ]
+            for d in PROD_TILTS:
+                g = [r for r in rows if r[1] == f"tilt{d}"]
+                cells = [
+                    f"{sum(r[3][i][1] for r in g)}/{len(g)} · {sum(r[3][i][0] for r in g) / max(1, len(g)):.1f}"
+                    for i in range(len(SWEEP))
+                ]
+                lines.append(f"| {d}° | " + " | ".join(cells) + " |")
+        return "\n".join(lines)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def report(outs: list[Outcome]) -> str:
     lines = [
         "## 실제 반납 사진",
@@ -637,8 +753,12 @@ def main() -> None:
     ap.add_argument("--backbone", required=True)
     ap.add_argument("--synthetic", action="store_true")
     ap.add_argument("--json")
+    ap.add_argument("--prod", action="store_true", help="운영 compare(bank 방식)를 임계값별로 돌린다")
     ap.add_argument("--bank", action="store_true", help="H(기준 전체 기억 장소)만 임계값별로 돌린다")
     a = ap.parse_args()
+    if a.prod:
+        print(run_prod(Path(a.dir), a.backbone, a.synthetic))
+        return
     if a.bank:
         print(run_bank(Path(a.dir), a.backbone, a.synthetic))
         return

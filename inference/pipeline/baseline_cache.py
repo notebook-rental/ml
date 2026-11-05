@@ -26,11 +26,12 @@ import numpy as np
 from common.messages import QrCode
 from common.storage import ObjectNotFound, Storage
 from inference.pipeline import align
+from inference.pipeline.bank import bank_features
 from inference.pipeline.imageutil import decode, encode_jpeg, resize_long_side, to_gray
 from inference.pipeline.patch_features import Backbone
 from inference.pipeline.segment import Segmenter, laptop_box_from_gray
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2  # 2: 조각 맞추기 기억 장소(bank) 추가(docs specs/004). 1이면 다시 계산한다
 
 
 def cache_key(photo_id) -> str:
@@ -51,13 +52,15 @@ class BaselineFeatures:
     dino_size: tuple[int, int]  # DINOv2 입력 (W,H)
     dino: np.ndarray  # [gh, gw, C] float32, 길이 1
     qr: list[QrCode]
+    bank: np.ndarray | None = None  # [K, C] float16, 크롭 통째 + 2×2 조각(inference/pipeline/bank.py)
 
     @property
     def gray(self) -> np.ndarray:
         return to_gray(self.image)
 
     def nbytes(self) -> int:
-        return self.image.nbytes + self.mask.nbytes + self.keypoints.desc.nbytes + self.dino.nbytes
+        extra = self.bank.nbytes if self.bank is not None else 0
+        return self.image.nbytes + self.mask.nbytes + self.keypoints.desc.nbytes + self.dino.nbytes + extra
 
 
 def mask_crop(mask: np.ndarray, pad: float = 0.03) -> tuple[int, int, int, int]:
@@ -90,6 +93,7 @@ def compute(
     crop = mask_crop(mask_full)
     x1, y1, x2, y2 = crop
     feats = backbone.features(small[y1:y2, x1:x2])
+    bank = bank_features(backbone, small[y1:y2, x1:x2])
     return BaselineFeatures(
         photo_id=str(photo_id),
         backbone=backbone.name,
@@ -103,6 +107,7 @@ def compute(
         dino_size=backbone.size,
         dino=feats,
         qr=list(qr or []),
+        bank=bank,
     )
 
 
@@ -127,6 +132,7 @@ def serialize(f: BaselineFeatures) -> bytes:
         kp_pts=f.keypoints.pts.astype(np.float32),
         kp_desc=f.keypoints.desc.astype(np.float16),
         dino=f.dino.astype(np.float16),
+        bank=(f.bank if f.bank is not None else np.zeros((0, f.dino.shape[-1]))).astype(np.float16),
     )
     return buf.getvalue()
 
@@ -149,6 +155,7 @@ def deserialize(data: bytes) -> BaselineFeatures:
         dino_size=tuple(meta["dinoSize"]),
         dino=z["dino"].astype(np.float32),
         qr=[QrCode.model_validate(q) for q in meta["qr"]],
+        bank=z["bank"],
     )
 
 

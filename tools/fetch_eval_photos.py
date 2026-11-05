@@ -56,27 +56,26 @@ def main():
     print(f"return={ret} baseline={base}", file=sys.stderr)
 
     info = {"return": ret, "baseline": base, "photos": {}}
-    tf = tarfile.open(fileobj=sys.stdout.buffer, mode="w|")
-    for folder, iid in (("return", ret), ("baseline", base)):
-        for shot, (pid, okey) in sorted(insp[iid].items()):
-            data = None
-            for key in (f"derived/work/{iid}/{pid}.jpg", okey):
-                try:
-                    data = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-                    break
-                except s3.exceptions.NoSuchKey:
+    with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as tf:
+        for folder, iid in (("return", ret), ("baseline", base)):
+            for shot, (pid, okey) in sorted(insp[iid].items()):
+                data = None
+                for key in (f"derived/work/{iid}/{pid}.jpg", okey):
+                    try:
+                        data = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+                        break
+                    except s3.exceptions.NoSuchKey:
+                        continue
+                if data is None:
                     continue
-            if data is None:
-                continue
-            info["photos"][f"{folder}/{shot}"] = pid
-            ti = tarfile.TarInfo(f"{folder}/{shot}.jpg")
-            ti.size = len(data)
-            tf.addfile(ti, io.BytesIO(data))
-    raw = json.dumps(info, indent=1).encode()
-    ti = tarfile.TarInfo("info.json")
-    ti.size = len(raw)
-    tf.addfile(ti, io.BytesIO(raw))
-    tf.close()
+                info["photos"][f"{folder}/{shot}"] = pid
+                ti = tarfile.TarInfo(f"{folder}/{shot}.jpg")
+                ti.size = len(data)
+                tf.addfile(ti, io.BytesIO(data))
+        raw = json.dumps(info, indent=1).encode()
+        ti = tarfile.TarInfo("info.json")
+        ti.size = len(raw)
+        tf.addfile(ti, io.BytesIO(raw))
 
 
 main()
