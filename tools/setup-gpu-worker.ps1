@@ -1,4 +1,4 @@
-# 집 AI PC(Windows + NVIDIA GPU)에 GPU 워커를 설치한다 (docs/gpu-worker.md).
+﻿# 집 AI PC(Windows + NVIDIA GPU)에 GPU 워커를 설치한다 (docs/gpu-worker.md).
 # 실행: ml 저장소 폴더에서 PowerShell을 열고
 #   powershell -ExecutionPolicy Bypass -File tools\setup-gpu-worker.ps1
 # 하는 일: 가상환경(.venv) 만들기 → ml 패키지 설치 → CPU판 onnxruntime을 GPU판으로 바꾸기 → GPU 확인
