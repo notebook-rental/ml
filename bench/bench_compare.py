@@ -177,7 +177,9 @@ def table(results: list[dict]) -> str:
 def main(argv: list[str] | None = None) -> list[dict]:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--backbone", required=True, help="DINOv2-S ONNX 경로")
-    ap.add_argument("--engine", nargs="+", default=["onnxruntime"], choices=["onnxruntime", "openvino"])
+    ap.add_argument(
+        "--engine", nargs="+", default=["onnxruntime"], choices=["onnxruntime", "cuda", "openvino"]
+    )
     ap.add_argument("--threads", nargs="+", type=int, default=[0], help="0 = CPU 수")
     ap.add_argument("--long-side", nargs="+", type=int, default=[1024])
     ap.add_argument("--concurrency", nargs="+", type=int, default=[1])

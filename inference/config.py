@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     api_base_url: str = "http://localhost:8080"
     internal_token: str = ""
     active_model_poll_seconds: int = 30
+    # 작업 대기열(ml_job)을 몇 초마다 볼지. 0이면 보지 않는다. 운영(prod.env)은 10초.
+    # api는 파드에 만든 지 2분 지난 작업만 준다(집 AI PC GPU 워커가 먼저, docs specs/003-gpu-worker)
+    job_poll_seconds: float = 0
 
     # 모델 파일: 저장소 키 → 로컬 캐시 폴더에 내려받아 쓴다. 이미지에 모델을 넣지 않는다.
     model_cache_dir: str = "./.data/models"
@@ -50,7 +53,7 @@ class Settings(BaseSettings):
     sam_decoder_key: str = ""
 
     # 추론 튜닝 값(inference-profile.json으로 덮어쓸 수 있다)
-    engine: Literal["onnxruntime", "openvino"] = "onnxruntime"
+    engine: Literal["onnxruntime", "cuda", "openvino"] = "onnxruntime"  # cuda: NVIDIA GPU(onnxruntime-gpu)
     intra_op_threads: int = 0  # 0이면 파드 CPU 수
     max_concurrent_compares: int = 2  # 넘으면 503
     compare_long_side: int = 1024  # 정렬·DINOv2 비교 해상도(긴 변)
