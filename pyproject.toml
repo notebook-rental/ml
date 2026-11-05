@@ -37,6 +37,10 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["common*", "inference*", "bench*"]
 
+# 프로파일 설정 파일(local.env, prod.env)도 패키지에 넣는다. 빠지면 운영에서 prod.env가 조용히 무시된다.
+[tool.setuptools.package-data]
+inference = ["config/*.env"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

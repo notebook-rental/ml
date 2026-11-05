@@ -7,7 +7,9 @@ WORKDIR /src
 COPY pyproject.toml README.md ./
 COPY common ./common
 COPY inference ./inference
-RUN pip install --no-cache-dir --prefix=/install .
+RUN pip install --no-cache-dir --prefix=/install . \
+    && PYTHONPATH=$(echo /install/lib/python3.12/site-packages) python -c \
+    "from inference.config import _profile_env_file as f; assert f('prod'), 'prod.env가 패키지에 없습니다'"
 
 FROM python:3.12-slim
 # OpenCV(headless)가 쓰는 공유 라이브러리
@@ -17,7 +19,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 li
     && mkdir -p /var/cache/models && chown app /var/cache/models
 COPY --from=build /install /usr/local
 WORKDIR /app
-COPY --chown=app inference/config ./inference/config
 USER app
 ENV APP_PROFILE=prod \
     PYTHONUNBUFFERED=1 \

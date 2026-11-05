@@ -117,3 +117,31 @@ def test_settings_profiles(monkeypatch):
     assert s.app_profile == "test" and s.threads() >= 1
     assert config.Settings(intra_op_threads=3).threads() == 3
     config.get_settings.cache_clear()
+
+
+def test_profile_env_files_are_package_data():
+    """prod.env가 설치된 패키지에도 들어가야 한다(빠지면 운영 설정이 조용히 무시된다)."""
+    import tomllib
+    from pathlib import Path
+
+    from inference.config import _profile_env_file, get_settings
+
+    root = Path(__file__).resolve().parents[2]
+    cfg = tomllib.loads((root / "pyproject.toml").read_text())
+    assert "config/*.env" in cfg["tool"]["setuptools"]["package-data"]["inference"]
+    assert _profile_env_file("prod") is not None
+    get_settings.cache_clear()
+    import os
+
+    old = os.environ.get("APP_PROFILE")
+    os.environ["APP_PROFILE"] = "prod"
+    try:
+        s = get_settings()
+        assert s.backbone_url.startswith("https://github.com/notebook-rental/ml/releases/")
+        assert len(s.backbone_sha256) == 64
+    finally:
+        get_settings.cache_clear()
+        if old is None:
+            os.environ.pop("APP_PROFILE")
+        else:
+            os.environ["APP_PROFILE"] = old
