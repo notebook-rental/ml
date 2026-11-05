@@ -17,7 +17,7 @@ import numpy as np
 from common.messages import QrCode, QualityResult, QualityScores
 from inference.config import Settings
 from inference.pipeline.imageutil import resize_long_side, to_gray
-from inference.pipeline.qr import detect_qr
+from inference.pipeline.qr import detect_barcodes, detect_qr
 
 ANALYSIS_SIDE = 1024
 
@@ -52,6 +52,9 @@ def check_quality(img: np.ndarray, shot_type: str, settings: Settings) -> Qualit
         coverage = (box[2] - box[0]) * (box[3] - box[1]) / float(gray.shape[0] * gray.shape[1])
 
     qrs: list[QrCode] = detect_qr(img)
+    # 상판에 QR이 없으면 바코드 라벨을 찾는다(라벨은 QR 또는 바코드, spec 002).
+    # 바코드는 상판에서만 찾아 다른 컷의 품질 검사 시간을 늘리지 않는다.
+    labels: list[QrCode] = qrs if qrs or shot_type != "top" else detect_barcodes(img)
 
     reasons: list[str] = []
     if blur < settings.quality_blur_min:
@@ -65,7 +68,8 @@ def check_quality(img: np.ndarray, shot_type: str, settings: Settings) -> Qualit
     if shot_type == "top":
         if len({q.value for q in qrs}) > 1:
             reasons.append("multiple_qr")
-        elif not qrs:
+        elif not labels:
+            # 이름은 예전 그대로 둔다(계약 값). 뜻은 "자산 번호 라벨을 못 찾음"이다.
             reasons.append("qr_not_found")
 
     box_orig = [round(v / scale) for v in box] if box is not None else None
@@ -74,5 +78,5 @@ def check_quality(img: np.ndarray, shot_type: str, settings: Settings) -> Qualit
         reasons=reasons,
         scores=QualityScores(blur=round(blur, 1), exposure=round(exposure, 3), coverage=round(coverage, 3)),
         laptopBox=box_orig,
-        qr=qrs,
+        qr=labels,
     )

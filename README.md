@@ -21,7 +21,7 @@
 
 1. **대여할 때**: 사진이 저장되면 api가 `POST /baseline-features`를 부른다. ml이 그 사진의 특징(노트북 영역, 특징점,
    DINOv2 패치 특징)을 **미리 계산**해 `derived/baseline-features/<photoId>.npz`에 둔다. 반납 때 기다리는 시간을 줄이려는 것이다.
-2. **반납 QR을 스캔할 때**: api가 모든 ml 파드에 `POST /prefetch`를 보내 그 노트북의 기준 특징 8개를 **메모리에 미리 올린다.**
+2. **반납 라벨(QR 또는 바코드)을 스캔할 때**: api가 모든 ml 파드에 `POST /prefetch`를 보내 그 노트북의 기준 특징 8개를 **메모리에 미리 올린다.**
 3. **반납 컷 1장이 올라올 때마다**: api가 `POST /compare`를 부르면, ml이 정렬 → 비교 → 후보 추출을 하고 후보 목록을 돌려준다.
    4 vCPU에서 컷 1장 **약 0.5초**(목표 5초, 상한 10초). 측정 방법과 표는 [docs/benchmark.md](docs/benchmark.md).
 
@@ -49,7 +49,7 @@ inference/
   app.py                FastAPI HTTP 서버(엔드포인트 목록은 아래)
   config.py             설정(APP_PROFILE=local|prod, 환경변수)
   config/{local,prod}.env  프로파일별 비밀이 아닌 기본값
-  quality.py            촬영 품질 검사(흐림·노출·구도·QR)
+  quality.py            촬영 품질 검사(흐림·노출·구도·자산 번호 라벨)
   compare.py            컷 하나 비교(파이프라인 조립)
   model_registry.py     모델 내려받기·sha256 검증·워밍업·무중단 교체
   response.py           공통 응답 형식(header/result)
@@ -60,7 +60,7 @@ inference/
     patch_features.py   DINOv2 패치 특징, 기준 대비 최근접 거리
     ssim.py             1px 어긋남을 허용하는 SSIM 차분
     postprocess.py      점수 결합 → 임계값 → 덩어리 → 다각형, 반사 제외
-    qr.py               QR 검출, QR 영역 마스크
+    qr.py               자산 번호 라벨 검출(QR: OpenCV, 바코드 Code128·Code39: zxing-cpp), 라벨 영역 마스크
     existing_damage.py  기존 손상과 겹침 판정
     typing.py           유형 추정(모양 규칙)
     baseline_cache.py   기준 특징 사전 계산·저장(npz)·메모리 LRU

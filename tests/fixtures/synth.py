@@ -128,3 +128,11 @@ def map_box(box: tuple[int, int, int, int], M: np.ndarray) -> tuple[float, float
     c = np.float32([[[(x1 + x2) / 2, (y1 + y2) / 2]]])
     p = cv2.perspectiveTransform(c, M)[0, 0]
     return float(p[0]), float(p[1])
+
+
+def barcode_image(value: str, scale: int = 3) -> np.ndarray:
+    """Code128 바코드 라벨 이미지(BGR). 자산 번호 바코드 라벨 테스트용."""
+    import zxingcpp
+
+    img = np.array(zxingcpp.create_barcode(value, zxingcpp.BarcodeFormat.Code128).to_image(scale=scale))
+    return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
