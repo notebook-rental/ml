@@ -13,6 +13,7 @@
 - B crop         반납 사진도 노트북 영역만 잘라 SIFT를 뽑는다(배경 짝이 섞이지 않게)
 - C crop_loose   B + 기준 완화(12점/16px)
 - E asift       B + 반납 사진을 여러 방향으로 미리 기울여 SIFT(ASIFT, 모델 없음)
+- F hybrid      E + 넓은 허용 범위(크기·원근) + 주변 반경 3, 그래도 겹치기가 안 되면 D로 대신
 - D dino_global  겹치기(호모그래피) 없이 DINOv2 패치끼리 "가장 닮은 조각"을 노트북 전체에서 찾는다
                  각도·위치가 달라도 조각 단위로 맞춘다. 정렬 실패가 없다.
 
@@ -160,6 +161,7 @@ class Harness:
         settings: Settings,
         crop_target: bool,
         asift: bool = False,
+        wide: bool = False,
     ) -> dict:
         self.n += 1
         req = CompareRequest(
@@ -170,6 +172,9 @@ class Harness:
             targetImageKey=target_key,
         )
         orig_extract = align.extract
+        orig_plausible = align._plausible
+        if wide:
+            compare_mod.align._plausible = wide_plausible
         if crop_target:
             seg = self.models.segmenter
 
@@ -189,7 +194,14 @@ class Harness:
             ms = round((time.perf_counter() - t) * 1000)
         finally:
             compare_mod.align.extract = orig_extract
+            compare_mod.align._plausible = orig_plausible
         return {"result": r, "ms": ms}
+
+
+def wide_plausible(H: np.ndarray) -> bool:
+    """가까이·멀리, 비스듬히 찍어도 받아 주는 넓은 범위(크기 0.3~3배, 원근 항 0.01까지). 뒤집힘만 막는다."""
+    det = float(np.linalg.det(H[:2, :2]))
+    return 0.1 < det < 10.0 and abs(H[2, 0]) < 0.01 and abs(H[2, 1]) < 0.01
 
 
 def asift_extract(gray: np.ndarray, mask: np.ndarray, extract) -> align.Keypoints:
@@ -306,10 +318,11 @@ def dino_global(
 def methods(base: Settings):
     loose = base.model_copy(update={"min_inliers": 12, "max_reproj_error_px": 16.0})
     return [
-        ("A current", base, False, False),
-        ("B crop", base, True, False),
-        ("C crop_loose", loose, True, False),
-        ("E asift", base, True, True),
+        ("A current", base, False, False, False),
+        ("B crop", base, True, False, False),
+        ("C crop_loose", loose, True, False, False),
+        ("E asift", base, True, True, False),
+        ("F hybrid", base.model_copy(update={"neighbor_radius": 3}), True, True, True),
     ]
 
 
@@ -338,10 +351,26 @@ def run(dir_: Path, backbone: str, synthetic: bool) -> list[Outcome]:
             for case, timg, smask in cases:
                 tkey = f"photos/target/{shot}-{case}.jpg"
                 h.put(tkey, timg)
-                for name, st, crop, asift in methods(s):
-                    out = h.run_pipeline(shot, bkey, bid, tkey, st, crop, asift)
+                for name, st, crop, asift, wide in methods(s):
+                    out = h.run_pipeline(shot, bkey, bid, tkey, st, crop, asift, wide)
                     outs.append(pipeline_outcome(name, shot, case, out, smask))
-                outs.append(dino_global(h, bkey, bid, timg, s, smask, shot, case))
+                d = dino_global(h, bkey, bid, timg, s, smask, shot, case)
+                outs.append(d)
+                f = outs[-2]
+                if not f.comparable:  # F: 겹치기가 안 되면 조각 맞추기(D)로 대신한다. "비교 불가"가 없다
+                    outs[-2] = Outcome(
+                        "F hybrid",
+                        shot,
+                        case,
+                        True,
+                        f"fallback:{f.reason}",
+                        f.inliers,
+                        f.reproj,
+                        d.candidates,
+                        d.hit,
+                        f.ms + d.ms,
+                        d.extra,
+                    )
                 print(".", end="", file=sys.stderr, flush=True)
         print(file=sys.stderr)
         return outs
