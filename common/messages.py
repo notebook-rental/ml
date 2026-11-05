@@ -99,6 +99,14 @@ class CompareParams(Message):
     threshold: float | None = None
 
 
+class BankPhoto(Message):
+    """조각 맞추기 기억 장소에 넣을 기준 사진 하나(docs specs/004). 보통 그 노트북의 현재 기준 사진 전부."""
+
+    photoId: Id
+    imageKey: str
+    shotType: str | None = None
+
+
 class CompareRequest(Message):
     schemaVersion: int = SCHEMA_VERSION
     comparisonId: Id
@@ -112,6 +120,9 @@ class CompareRequest(Message):
     existingDamages: list[ExistingDamage] = Field(default_factory=list)
     baselineQr: list[QrCode] = Field(default_factory=list)
     params: CompareParams = Field(default_factory=CompareParams)
+    bankPhotos: list[BankPhoto] = Field(
+        default_factory=list, description="비우면 baselinePhotoId 한 장만 기억 장소로 쓴다(옛 api와 호환)"
+    )
 
 
 class Alignment(Message):
@@ -138,6 +149,11 @@ class CompareResult(Message):
     runtimeMs: int = 0
     timingsMs: dict[str, int] = Field(default_factory=dict)
     modelVersionId: Id | None = None
+    method: Literal["aligned", "patch"] | None = Field(
+        default=None,
+        description="aligned: 정확히 겹쳐 대여 좌표도 있음, patch: 조각 맞추기만(대여 좌표 없음)",
+    )
+    matchedBaselinePhotoId: Id | None = Field(default=None, description="반납 사진과 가장 닮은 기준 사진")
 
 
 # ---------- /models/reload, GET /internal/models/active ----------

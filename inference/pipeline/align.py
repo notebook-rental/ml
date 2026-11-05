@@ -55,6 +55,32 @@ def extract(gray: np.ndarray, mask: np.ndarray | None = None) -> Keypoints:
     return Keypoints(pts, desc.astype(np.float32))
 
 
+def extract_asift(gray: np.ndarray, mask: np.ndarray | None = None) -> Keypoints:
+    """ASIFT: 사진을 여러 방향으로 미리 눌러(기울인 것처럼) 본 뒤 SIFT를 뽑아 원래 좌표로 되돌린다 (docs specs/004).
+
+    비스듬히 찍으면 같은 무늬가 한쪽으로 찌그러져 SIFT 짝이 안 맞는다. 반대로 찌그러뜨린 사진을 여러 장 만들어 두면
+    그중 하나는 기준 사진과 비슷해진다. 모델 없이 OpenCV만 쓴다.
+    """
+    pts, desc = [], []
+    h, w = gray.shape
+    for t in (1.0, 1.41, 2.0):
+        for phi in (0,) if t == 1.0 else (0, 45, 90, 135):
+            A = cv2.getRotationMatrix2D((w / 2, h / 2), phi, 1.0)
+            A[0] /= t  # 돌린 뒤 가로로 1/t 눌러 기울기 흉내
+            A[0, 2] += (w - w / t) / 2
+            g = cv2.warpAffine(gray, A, (w, h), flags=cv2.INTER_LINEAR)
+            m = cv2.warpAffine(mask, A, (w, h), flags=cv2.INTER_NEAREST) if mask is not None else None
+            k = extract(g, m)
+            if not len(k.pts):
+                continue
+            back = np.c_[k.pts, np.ones(len(k.pts))] @ cv2.invertAffineTransform(A).T
+            pts.append(back.astype(np.float32))
+            desc.append(k.desc)
+    if not pts:
+        return Keypoints(np.zeros((0, 2), np.float32), np.zeros((0, 128), np.float32))
+    return Keypoints(np.vstack(pts), np.vstack(desc))
+
+
 def match(target: Keypoints, baseline: Keypoints) -> tuple[np.ndarray, np.ndarray]:
     """Lowe 비율 검사로 확실한 짝만 남긴다. (target 점들, baseline 점들)."""
     if len(target.pts) < 2 or len(baseline.pts) < 2:
@@ -75,6 +101,7 @@ def align(
     extra_pairs: tuple[np.ndarray, np.ndarray] | None = None,
     min_inliers: int = 25,
     max_reproj_error_px: float = 8.0,
+    wide: bool = False,
 ) -> AlignResult:
     src, dst = match(target, baseline)
     if extra_pairs is not None and len(extra_pairs[0]):
@@ -82,6 +109,7 @@ def align(
         dst = np.vstack([dst, np.repeat(extra_pairs[1], QR_REPEAT, axis=0)])
     if len(src) < max(4, min_inliers):
         return AlignResult(False, None, float("inf"), len(src), "too_few_matches")
+    cv2.setRNGSeed(0)  # RANSAC 계열은 무작위를 쓴다. 같은 입력이면 같은 결과(멱등)
     H, inl = cv2.findHomography(src, dst, cv2.USAC_MAGSAC, 4.0, maxIters=5000, confidence=0.999)
     if H is None or inl is None:
         return AlignResult(False, None, float("inf"), 0, "homography_failed")
@@ -91,7 +119,7 @@ def align(
     err = float(np.median(np.linalg.norm(proj - dst[inl], axis=1))) if n_in else float("inf")
     if n_in < min_inliers:
         return AlignResult(False, H, err, n_in, "too_few_inliers")
-    if err > max_reproj_error_px or not _plausible(H):
+    if err > max_reproj_error_px or not (_plausible_wide(H) if wide else _plausible(H)):
         return AlignResult(False, H, err, n_in, "alignment_error_too_large")
     return AlignResult(True, H, err, n_in)
 
@@ -100,6 +128,12 @@ def _plausible(H: np.ndarray) -> bool:
     """찍는 구도가 정해져 있으므로 크게 뒤집히거나 찌그러진 변환은 잘못 맞춘 것이다."""
     det = float(np.linalg.det(H[:2, :2]))
     return 0.25 < det < 4.0 and abs(H[2, 0]) < 0.005 and abs(H[2, 1]) < 0.005
+
+
+def _plausible_wide(H: np.ndarray) -> bool:
+    """대충 찍은 사진용 넓은 범위(크기 약 0.3~3배, 원근 항 0.01까지). 뒤집힘(행렬식 음수)만 확실히 막는다."""
+    det = float(np.linalg.det(H[:2, :2]))
+    return 0.1 < det < 10.0 and abs(H[2, 0]) < 0.01 and abs(H[2, 1]) < 0.01
 
 
 def qr_pairs(target_qr, baseline_qr, t_scale: float, b_scale: float) -> tuple[np.ndarray, np.ndarray] | None:

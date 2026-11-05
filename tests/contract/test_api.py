@@ -137,6 +137,38 @@ def test_compare_done(client, photos):
     assert f[0]["geometry"]["type"] == "polygon" and f[0]["overlapsDamageId"] is None
 
 
+def test_compare_bank_picks_matching_baseline(client, put, photos):
+    """기준 사진 목록(bankPhotos) 중 반납 사진과 닮은 사진을 고른다. 컷 이름이 틀려도 된다(004 US2)."""
+    import numpy as np
+
+    other = np.full((1200, 1600, 3), (30, 120, 30), np.uint8)
+    other[300:900, 400:1200] = (20, 200, 220)
+    put("derived/work/other.jpg", synth.jpeg(other))
+    bank = [
+        {"photoId": 70, "imageKey": "derived/work/other.jpg", "shotType": "top"},
+        {
+            "photoId": 71,
+            "imageKey": "derived/work/base.jpg",
+            "shotType": "bottom",
+        },  # 이름은 bottom, 실제는 상판
+    ]
+    res = _ok(
+        client.post(
+            "/compare",
+            json=compare_body(baselinePhotoId=70, baselineImageKey="derived/work/other.jpg", bankPhotos=bank),
+        )
+    )
+    assert res["status"] == "done"
+    assert res["matchedBaselinePhotoId"] == 71
+    assert res["method"] in ("aligned", "patch")
+    assert any(f["predictedType"] != "qr_tampered" for f in res["findings"])
+
+
+def test_compare_done_reports_method(client, photos):
+    res = _ok(client.post("/compare", json=compare_body()))
+    assert res["method"] == "aligned" and res["matchedBaselinePhotoId"] == 55
+
+
 def test_compare_string_ids_and_unknown_fields(client, photos):
     res = _ok(client.post("/compare", json=compare_body(comparisonId="c-1", futureField=True)))
     assert res["status"] == "done"
@@ -149,7 +181,7 @@ def test_compare_not_comparable(client, put, photos, caplog):
 
     caplog.set_level(logging.INFO, logger="inference.compare")
 
-    noise = (np.random.default_rng(0).random((900, 1200, 3)) * 255).astype("uint8")
+    noise = np.full((900, 1200, 3), 128, "uint8")  # 노트북이 안 보이는 사진 → laptop_not_found
     put("derived/work/noise.jpg", synth.jpeg(noise))
     res = _ok(
         client.post("/compare", json=compare_body(targetImageKey="derived/work/noise.jpg", shotType="hinge"))
@@ -170,7 +202,7 @@ def test_compare_unexpected_error_is_failed(client, photos, monkeypatch):
     def boom(*a, **k):
         raise ValueError("boom")
 
-    monkeypatch.setattr(compare_mod, "neighbor_distance", boom)
+    monkeypatch.setattr(compare_mod.bank_mod, "match", boom)
     res = _ok(client.post("/compare", json=compare_body()))
     assert res["status"] == "failed" and "boom" in res["error"]
 
