@@ -142,8 +142,12 @@ def test_compare_string_ids_and_unknown_fields(client, photos):
     assert res["status"] == "done"
 
 
-def test_compare_not_comparable(client, put, photos):
+def test_compare_not_comparable(client, put, photos, caplog):
+    import logging
+
     import numpy as np
+
+    caplog.set_level(logging.INFO, logger="inference.compare")
 
     noise = (np.random.default_rng(0).random((900, 1200, 3)) * 255).astype("uint8")
     put("derived/work/noise.jpg", synth.jpeg(noise))
@@ -151,6 +155,8 @@ def test_compare_not_comparable(client, put, photos):
         client.post("/compare", json=compare_body(targetImageKey="derived/work/noise.jpg", shotType="hinge"))
     )
     assert res["status"] == "not_comparable" and res["reason"]
+    # 왜 자동 비교 불가인지 운영 로그에 남는다
+    assert any(f"reason={res['reason']}" in m for m in caplog.messages)
 
 
 def test_compare_failed(client, photos):
