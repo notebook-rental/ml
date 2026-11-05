@@ -70,7 +70,7 @@ class Settings(BaseSettings):
 
     # 비교 방식(docs specs/004): bank = 조각 맞추기(기준 사진 전부, 각도 무관), aligned = 예전 방식(정확히 겹친 뒤 비교)
     compare_mode: Literal["bank", "aligned"] = "bank"
-    bank_threshold: float = 0.65  # 이상 점수(코사인 거리 / dino_scale) 임계값. research 결과 2로 보정
+    bank_threshold: float = 0.75  # 이상 점수(코사인 거리 / dino_scale) 임계값. docs specs/004 research 결과 2(실제 8컷 가짜 19, 합성 0° 8/8)
     bank_ssim_threshold: float = (
         0.35  # 겹쳐졌을 때 SSIM 차분(× ssim_gain) 임계값. 예전 방식의 threshold와 같은 값
     )
