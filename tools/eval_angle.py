@@ -421,6 +421,174 @@ def run(dir_: Path, backbone: str, synthetic: bool) -> list[Outcome]:
         shutil.rmtree(work, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- H: 기준 8장 전체를 기억 장소로 쓰는 조각 맞추기
+
+SWEEP = (0.35, 0.45, 0.55, 0.65, 0.75)
+
+
+def letterbox(img: np.ndarray, aspect: float) -> np.ndarray:
+    """가로세로 비율을 aspect(W/H)로 맞추도록 검은 여백을 붙인다(늘이거나 찌그러뜨리지 않는다)."""
+    h, w = img.shape[:2]
+    if w / h > aspect:
+        nh = round(w / aspect)
+        top = (nh - h) // 2
+        return cv2.copyMakeBorder(img, top, nh - h - top, 0, 0, cv2.BORDER_CONSTANT, value=0)
+    nw = round(h * aspect)
+    left = (nw - w) // 2
+    return cv2.copyMakeBorder(img, 0, 0, left, nw - w - left, cv2.BORDER_CONSTANT, value=0)
+
+
+def tiles(img: np.ndarray, n: int = 2, overlap: float = 0.25):
+    """n×n 조각(겹침 overlap). (x, y, 조각) 목록."""
+    h, w = img.shape[:2]
+    tw, th = int(w / (n - (n - 1) * overlap)), int(h / (n - (n - 1) * overlap))
+    out = []
+    for i in range(n):
+        for j in range(n):
+            x = int(j * tw * (1 - overlap))
+            y = int(i * th * (1 - overlap))
+            out.append((x, y, img[y : y + th, x : x + tw]))
+    return out
+
+
+def laptop_crop(h: Harness, img: np.ndarray, s: Settings):
+    small, scale = resize_long_side(img, s.compare_long_side)
+    box = laptop_box_from_gray(img)
+    mask = h.models.segmenter.segment(small, None if box is None else tuple(round(v * scale) for v in box))
+    x1, y1, x2, y2 = mask_crop(mask)
+    return small, mask, (x1, y1, x2, y2)
+
+
+def feats_lb(h: Harness, img: np.ndarray) -> np.ndarray:
+    bw, bh = h.models.backbone.size
+    return h.models.backbone.features(letterbox(img, bw / bh))
+
+
+def build_bank(h: Harness, images: list[np.ndarray], s: Settings) -> np.ndarray:
+    """기준 사진마다 노트북 크롭을 0·90·180·270도로 돌리고, 통째로 + 2×2 조각(가까이 찍은 것 대비)으로 특징을 모은다."""
+    parts = []
+    for img in images:
+        small, _mask, (x1, y1, x2, y2) = laptop_crop(h, img, s)
+        crop = small[y1:y2, x1:x2]
+        for k in range(4):
+            r = np.ascontiguousarray(np.rot90(crop, k))
+            views = [r] + [t for _, _, t in tiles(r)]
+            for v in views:
+                f = feats_lb(h, v)
+                parts.append(f.reshape(-1, f.shape[-1]))
+    return np.vstack(parts).astype(np.float32)
+
+
+def bank_score(h: Harness, bank: np.ndarray, target: np.ndarray, s: Settings):
+    """반납 사진 노트북 영역의 이상 점수 맵(0~1). 통째로·2×2 조각 두 크기 중 더 잘 맞는(작은) 값을 쓴다."""
+    small, mask, (x1, y1, x2, y2) = laptop_crop(h, target, s)
+    crop = small[y1:y2, x1:x2]
+    ch, cw = crop.shape[:2]
+    bw, bh = h.models.backbone.size
+
+    def dist_map(view: np.ndarray) -> np.ndarray:
+        f = feats_lb(h, view)
+        gh, gw, c = f.shape
+        best = (f.reshape(-1, c) @ bank.T).max(1).reshape(gh, gw)
+        d = cv2.resize((1.0 - best).astype(np.float32), (bw, bh), interpolation=cv2.INTER_CUBIC)
+        # 여백을 붙였던 만큼 잘라 원래 크롭 비율로 되돌린다
+        vh, vw = view.shape[:2]
+        sc = min(bw / vw, bh / vh)
+        ox, oy = int((bw - vw * sc) / 2), int((bh - vh * sc) / 2)
+        d = d[oy : oy + int(vh * sc), ox : ox + int(vw * sc)]
+        return cv2.resize(d, (vw, vh), interpolation=cv2.INTER_LINEAR)
+
+    whole = dist_map(crop)
+    fine = np.full_like(whole, np.inf)
+    for x, y, t in tiles(crop):
+        d = dist_map(t)
+        th, tw = d.shape
+        fine[y : y + th, x : x + tw] = np.minimum(fine[y : y + th, x : x + tw], d)
+    fine[~np.isfinite(fine)] = whole[~np.isfinite(fine)]
+    dist = np.minimum(whole, fine)
+    score = np.zeros(mask.shape, np.float32)
+    score[y1:y2, x1:x2] = (dist / s.dino_scale).clip(0, 1)[:ch, :cw]
+    valid = cv2.erode(mask, np.ones((7, 7), np.uint8))
+    refl = specular(to_gray(small), np.zeros(mask.shape, np.uint8))
+    return score, valid, refl, float(dist.mean())
+
+
+def run_bank(dir_: Path, backbone: str, synthetic: bool) -> str:
+    work = Path(tempfile.mkdtemp(prefix="eval-bank-"))
+    try:
+        h = Harness(backbone, work)
+        s = Settings(storage_backend="local", local_storage_root=str(work), app_profile="test")
+        bases = {
+            sh: decode((dir_ / "baseline" / f"{sh}.jpg").read_bytes())
+            for sh in SHOTS
+            if (dir_ / "baseline" / f"{sh}.jpg").exists()
+        }
+        t = time.perf_counter()
+        bank = build_bank(h, list(bases.values()), s)
+        bank_ms = round((time.perf_counter() - t) * 1000)
+        cases = []
+        for sh in SHOTS:
+            rp = dir_ / "return" / f"{sh}.jpg"
+            if rp.exists():
+                cases.append((sh, "real", decode(rp.read_bytes()), None))
+            if synthetic and sh in bases:
+                for d in TILTS:
+                    img, _ = tilt(bases[sh], d)
+                    cases.append((sh, f"tilt{d}", img, draw_scratch(img, seed=SHOTS.index(sh) * 100 + d)))
+        rows = []
+        for sh, case, img, smask in cases:
+            t = time.perf_counter()
+            score, valid, refl, mean = bank_score(h, bank, img, s)
+            ms = round((time.perf_counter() - t) * 1000)
+            sm = None
+            if smask is not None:
+                sm = cv2.resize(smask, (score.shape[1], score.shape[0]), interpolation=cv2.INTER_NEAREST)
+            res = []
+            for th in SWEEP:
+                regs = extract_regions(score, valid, th, s.min_region_px, refl)
+                hits = sum(1 for r in regs if sm is not None and ((r.mask > 0) & (sm > 0)).any())
+                res.append((len(regs) - hits, hits > 0))
+            rows.append((sh, case, mean, ms, res))
+            print("h", end="", file=sys.stderr, flush=True)
+        print(file=sys.stderr)
+        head = " | ".join(f"가짜@{t}" for t in SWEEP)
+        lines = [
+            f"## H bank: 기준 {len(bases)}장 × 4방향 × 2크기 기억 장소({len(bank)}조각, {bank_ms}ms)",
+            "",
+            f"| 컷 | 경우 | 평균 거리 | ms | {head} |",
+            "|---|---|---|---|" + "---|" * len(SWEEP),
+        ]
+        for sh, case, mean, ms, res in rows:
+            if case == "real":
+                lines.append(
+                    f"| {sh} | real | {mean:.3f} | {ms} | " + " | ".join(str(c) for c, _ in res) + " |"
+                )
+        if synthetic:
+            lines += [
+                "",
+                "| 기울기 | " + " | ".join(f"찾음·가짜@{t}" for t in SWEEP) + " |",
+                "|---|" + "---|" * len(SWEEP),
+            ]
+            for d in TILTS:
+                g = [r for r in rows if r[1] == f"tilt{d}"]
+                cells = []
+                for i in range(len(SWEEP)):
+                    hit = sum(r[4][i][1] for r in g)
+                    fp = sum(r[4][i][0] for r in g) / max(1, len(g))
+                    cells.append(f"{hit}/{len(g)} · {fp:.1f}")
+                lines.append(f"| {d}° | " + " | ".join(cells) + " |")
+        tot = [
+            "",
+            "실제 컷 가짜 후보 합계: "
+            + ", ".join(
+                f"@{t}={sum(r[4][i][0] for r in rows if r[1] == 'real')}" for i, t in enumerate(SWEEP)
+            ),
+        ]
+        return "\n".join(lines + tot)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def report(outs: list[Outcome]) -> str:
     lines = [
         "## 실제 반납 사진",
@@ -466,7 +634,11 @@ def main() -> None:
     ap.add_argument("--backbone", required=True)
     ap.add_argument("--synthetic", action="store_true")
     ap.add_argument("--json")
+    ap.add_argument("--bank", action="store_true", help="H(기준 전체 기억 장소)만 임계값별로 돌린다")
     a = ap.parse_args()
+    if a.bank:
+        print(run_bank(Path(a.dir), a.backbone, a.synthetic))
+        return
     outs = run(Path(a.dir), a.backbone, a.synthetic)
     print(report(outs))
     if a.json:
