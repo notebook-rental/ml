@@ -14,6 +14,7 @@
 - C crop_loose   B + 기준 완화(12점/16px)
 - E asift       B + 반납 사진을 여러 방향으로 미리 기울여 SIFT(ASIFT, 모델 없음)
 - F hybrid      E + 넓은 허용 범위(크기·원근) + 주변 반경 3, 그래도 겹치기가 안 되면 D로 대신
+- G best_match  실제 사진만: 컷 이름을 무시하고 기준 8장 중 가장 잘 맞는 사진과 F로 비교
 - D dino_global  겹치기(호모그래피) 없이 DINOv2 패치끼리 "가장 닮은 조각"을 노트북 전체에서 찾는다
                  각도·위치가 달라도 조각 단위로 맞춘다. 정렬 실패가 없다.
 
@@ -326,6 +327,46 @@ def methods(base: Settings):
     ]
 
 
+def best_match(h: Harness, dir_: Path, s: Settings, prev: list[Outcome]) -> list[Outcome]:
+    """G: 컷 이름을 믿지 않는다. 반납 사진마다 기준 사진 전부와 맞춰 보고 가장 잘 맞는(짝이 많은) 기준을 고른다.
+
+    기준 컷 이름이 틀렸거나(바닥 자리에 상판), 관리자가 다른 면을 찍어도 맞는 기준을 찾는다.
+    """
+    _, st, crop, asift, wide = methods(s)[-1]
+    bases = [sh for sh in SHOTS if (dir_ / "baseline" / f"{sh}.jpg").exists()]
+    out = []
+    for shot in SHOTS:
+        if not (dir_ / "return" / f"{shot}.jpg").exists():
+            continue
+        tkey = f"photos/target/{shot}-real.jpg"
+        best = None
+        for b in bases:
+            r = h.run_pipeline(shot, f"photos/baseline/{b}.jpg", f"b-{b}", tkey, st, crop, asift, wide)
+            o = pipeline_outcome("G best_match", shot, "real", r, None)
+            o.extra = {**o.extra, "matched": b}
+            if o.comparable and (best is None or (o.inliers or 0) > (best.inliers or 0)):
+                best = o
+        if best is None:  # 어느 기준과도 겹치기가 안 되면 같은 이름 컷과 조각 맞추기(D)
+            d = next(
+                (o for o in prev if o.method == "D dino_global" and o.shot == shot and o.case == "real"), None
+            )
+            if d is None:
+                continue
+            best = Outcome(
+                "G best_match",
+                shot,
+                "real",
+                True,
+                "fallback:dino",
+                candidates=d.candidates,
+                ms=d.ms,
+                extra={**d.extra, "matched": shot},
+            )
+        out.append(best)
+        print("g", end="", file=sys.stderr, flush=True)
+    return out
+
+
 def run(dir_: Path, backbone: str, synthetic: bool) -> list[Outcome]:
     work = Path(tempfile.mkdtemp(prefix="eval-angle-"))
     try:
@@ -372,6 +413,7 @@ def run(dir_: Path, backbone: str, synthetic: bool) -> list[Outcome]:
                         d.extra,
                     )
                 print(".", end="", file=sys.stderr, flush=True)
+        outs += best_match(h, dir_, s, outs)
         print(file=sys.stderr)
         return outs
     finally:
