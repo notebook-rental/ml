@@ -208,8 +208,31 @@ def make_runner(cfg: dict, settings: Settings, models, poll: float, transport=No
     return JobRunner(client, lambda: ctx, cfg["workerId"], poll_seconds=poll, use_presigned=True, files=files)
 
 
+def log_path() -> Path:
+    return home() / "worker.log"
+
+
+def attach_log_file() -> Path:
+    """워커 기록을 화면과 함께 파일(~/.notebook-rental/worker.log, 1MB×3개)에도 남긴다.
+
+    작업 스케줄러로 띄운 창은 다른 프로그램이 화면을 읽을 수 없어서, 처리 결과를 이 파일로 확인한다.
+    """
+    from logging.handlers import RotatingFileHandler
+
+    path = log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    root = logging.getLogger()
+    if not any(getattr(h, "baseFilename", None) == str(path) for h in root.handlers):
+        h = RotatingFileHandler(path, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+        h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        root.addHandler(h)
+        root.setLevel(logging.INFO)
+    return path
+
+
 def cmd_run(a) -> int:
     cfg = load_config()
+    attach_log_file()
     s = worker_settings(a.engine)
     models = load_models(s)
     runner = make_runner(cfg, s, models, a.poll)

@@ -81,6 +81,7 @@ powershell -ExecutionPolicy Bypass -File tools\setup-gpu-worker.ps1
 ```
 
 `워커 시작: ...`이 보이고 5초마다 조용히 api에 묻는다. 작업이 오면 `작업 시작 jobId=...`, `작업 완료 ...`가 찍힌다. 멈추려면 Ctrl+C.
+같은 기록이 `C:\Users\<사용자>\.notebook-rental\worker.log`에도 남는다(1MB씩 3개까지). 작업 스케줄러로 띄워 창이 안 보일 때는 이 파일로 확인한다.
 
 ## 6. 원격에서 GPU가 쓰이는지 확인
 
