@@ -1,0 +1,35 @@
+# Release의 모델 파일(export-model 워크플로가 만든 것)을 ghcr 이미지로 감싸 올린다(손으로 한 번 실행).
+# 이미지: ghcr.io/notebook-rental/ml-model-dinov2-s14:<Release 태그>
+# deploy의 ml-inference Deployment initContainer가 이 이미지에서 모델을 복사한다.
+name: model-image
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 모델 Release 태그
+        default: model-dinov2-s14-v1
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release에서 모델 받기, sha256 확인
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ inputs.tag }}" -p model.onnx -p model.onnx.sha256 -D docker
+          cd docker && sha256sum -c model.onnx.sha256
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: 이미지 빌드·push
+        run: |
+          IMG=ghcr.io/notebook-rental/ml-model-dinov2-s14:${{ inputs.tag }}
+          docker build -f docker/model.Dockerfile -t "$IMG" docker
+          docker push "$IMG"
+          echo "pushed $IMG" >> "$GITHUB_STEP_SUMMARY"
