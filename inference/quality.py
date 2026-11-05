@@ -40,6 +40,9 @@ def laptop_box(gray: np.ndarray) -> tuple[int, int, int, int] | None:
     return x, y, x + w, y + h
 
 
+LABEL_SHOTS = ("top", "bottom")
+
+
 def check_quality(img: np.ndarray, shot_type: str, settings: Settings) -> QualityResult:
     small, scale = resize_long_side(img, ANALYSIS_SIDE)
     gray = to_gray(small)
@@ -52,9 +55,9 @@ def check_quality(img: np.ndarray, shot_type: str, settings: Settings) -> Qualit
         coverage = (box[2] - box[0]) * (box[3] - box[1]) / float(gray.shape[0] * gray.shape[1])
 
     qrs: list[QrCode] = detect_qr(img)
-    # 상판에 QR이 없으면 바코드 라벨을 찾는다(라벨은 QR 또는 바코드, spec 002).
-    # 바코드는 상판에서만 찾아 다른 컷의 품질 검사 시간을 늘리지 않는다.
-    labels: list[QrCode] = qrs if qrs or shot_type != "top" else detect_barcodes(img)
+    # QR이 없으면 바코드 라벨을 찾는다(라벨은 QR 또는 바코드, spec 002).
+    # 라벨은 상판이나 바닥면에 붙어 있다. 바코드는 이 두 컷에서만 찾아 다른 컷의 품질 검사 시간을 늘리지 않는다.
+    labels: list[QrCode] = qrs if qrs or shot_type not in LABEL_SHOTS else detect_barcodes(img)
 
     reasons: list[str] = []
     if blur < settings.quality_blur_min:
@@ -65,12 +68,10 @@ def check_quality(img: np.ndarray, shot_type: str, settings: Settings) -> Qualit
         reasons.append("too_bright")
     if coverage < settings.quality_coverage_min:
         reasons.append("out_of_frame")
-    if shot_type == "top":
-        if len({q.value for q in qrs}) > 1:
-            reasons.append("multiple_qr")
-        elif not labels:
-            # 이름은 예전 그대로 둔다(계약 값). 뜻은 "자산 번호 라벨을 못 찾음"이다.
-            reasons.append("qr_not_found")
+    if shot_type == "top" and len({q.value for q in qrs}) > 1:
+        reasons.append("multiple_qr")
+    # 라벨이 안 보여도 거절하지 않는다. 라벨이 상판이 아니라 바닥면에 있는 노트북도 있다(2026-11-05 marco).
+    # 노트북 확인은 촬영 시작 때 라벨 스캔으로 한다. 찾은 라벨은 qr로 돌려줘 api가 다른 노트북인지 비교한다.
 
     box_orig = [round(v / scale) for v in box] if box is not None else None
     return QualityResult(
