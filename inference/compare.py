@@ -88,10 +88,16 @@ def compare(
     result.modelVersionId = (
         req.modelVersion.id if req.modelVersion.id is not None else models.model_version_id
     )
+    a = result.alignment
     log.info(
-        "compare comparisonId=%s status=%s findings=%d runtimeMs=%d timings=%s",
+        "compare comparisonId=%s status=%s reason=%s inliers=%s reprojErrorPx=%s findings=%d runtimeMs=%d timings=%s",
         req.comparisonId,
         result.status,
+        result.reason
+        or result.error
+        or "-",  # 자동 비교 불가·실패의 이유(정렬 실패면 inliers가 기준보다 적다)
+        a.inliers if a else "-",
+        a.reprojErrorPx if a else "-",
         len(result.findings),
         result.runtimeMs,
         timer.ms,
