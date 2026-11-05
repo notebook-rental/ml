@@ -40,7 +40,7 @@ from common.messages import (
 )
 from common.storage import LocalStorage, ObjectNotFound, S3Storage, Storage
 from inference import compare as compare_mod
-from inference.config import Settings, get_settings
+from inference.config import Settings, _profile_env_file, get_settings
 from inference.model_registry import ActiveModelPoller, ModelRegistry
 from inference.pipeline.baseline_cache import BaselineStore, cache_key
 from inference.pipeline.imageutil import ImageDecodeError, decode
@@ -262,8 +262,9 @@ def default_app() -> FastAPI:  # pragma: no cover - uvicorn --factory 진입점
     s = get_settings()
     # 비밀값(키, 토큰)은 찍지 않는다. 토큰은 설정 여부만.
     log.info(
-        "시작 profile=%s storage=%s endpoint=%s bucket=%s backbone=%s token=%s",
+        "시작 profile=%s env_file=%s storage=%s endpoint=%s bucket=%s backbone=%s token=%s",
         s.app_profile,
+        _profile_env_file(s.app_profile),
         s.storage_backend,
         s.minio_endpoint,
         s.minio_bucket,
