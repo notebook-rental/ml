@@ -37,9 +37,9 @@ def test_out_of_frame(settings):
     assert "out_of_frame" in r.reasons
 
 
-def test_qr_not_found_only_for_top(settings):
+def test_missing_label_does_not_reject(settings):
     img = synth.view(synth.base_scene(0, qr_value=None).image, seed=1, shift=10)[0]
-    assert "qr_not_found" in check_quality(img, "top", settings).reasons
+    assert "qr_not_found" not in check_quality(img, "top", settings).reasons  # 라벨이 바닥면에 있을 수 있다
     assert "qr_not_found" not in check_quality(img, "hinge", settings).reasons
 
 
