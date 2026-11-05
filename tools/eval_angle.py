@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import shutil
 import sys
 import tempfile
@@ -143,7 +144,7 @@ class Harness:
     def __init__(self, backbone_path: str, work: Path):
         self.work = work
         self.storage = LocalStorage(work)
-        session = create_session(backbone_path, "onnxruntime", 0)
+        session = create_session(backbone_path, "onnxruntime", int(os.environ.get("EVAL_THREADS", "0")))
         self.models = Models(backbone=Backbone(session, "dinov2-s14@1"), segmenter=GrabCutSegmenter())
         self.baselines = BaselineStore(self.storage, 64)
         self.n = 0
